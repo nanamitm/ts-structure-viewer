@@ -22,6 +22,14 @@ add_executable(ts-structure-viewer
 )
 target_link_libraries(ts-structure-viewer PRIVATE Qt6::Widgets)
 
+add_executable(ts-compare-viewer
+    src/compare_main.cpp
+    src/CompareViewer.h
+    src/CompareViewer.cpp
+)
+target_link_libraries(ts-compare-viewer PRIVATE Qt6::Widgets)
+
 if (WIN32)
     set_target_properties(ts-structure-viewer PROPERTIES WIN32_EXECUTABLE ON)
+    set_target_properties(ts-compare-viewer PROPERTIES WIN32_EXECUTABLE ON)
 endif()

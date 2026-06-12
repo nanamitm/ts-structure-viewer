@@ -51,18 +51,30 @@ lives in `ts-edit-gui/src/ui/StructureViewer.*`; the copy here is the sandbox
 where new ideas are prototyped against synthetic data before porting back.
 Keep the two in sync deliberately (the integrated one is canonical).
 
-## Next direction: two-file comparison viewer
-A dedicated viewer that loads **two files side by side** (e.g. the source TS and
-the smart-rendered export) and aligns their structure on a shared viewport, to
-verify a smart-render round-trip:
-- two stacked structure lanes sharing one zoom/pan range
-- diff the GOP/RAP layout: which keyframes are copied verbatim vs. re-encoded
-- highlight the cut seams and check continuity (PTS/DTS/PCR, CC) across them
-- stream/PSI diff (PIDs, ARIB caption, audio tracks preserved through the cut)
+## Two-file comparison viewer (`ts-compare-viewer`)
+`CompareViewer` aligns a **source** and its **smart-render export** on one shared
+viewport to verify a round trip. The master axis is SOURCE time:
 
-Build it here against synthetic A/B data first, then port the stable widget
-into `ts-edit-gui`.
+- **A: source** lane — the whole source GOP/RAP structure; kept ranges are lit,
+  dropped ranges dimmed.
+- **B: export** lane — each output piece drawn directly beneath the source time
+  it came from: a verbatim copy lines up vertically and keeps its GOP boundaries
+  (green); a lead-in / tail re-encode window shows as a short orange block; cut
+  regions leave a gap. A red seam marker flags each splice of non-adjacent source.
+- A secondary ruler under lane B reads the rebased OUTPUT time.
+
+Same controls as the structure viewer (wheel zoom / drag pan / click seek /
+double-click fit). Driven by synthetic A/B round-trip data in `compare_main.cpp`
+(mirrors `planSegments` + the export assembly); swap in two real `TsSourceIndex`
+scans + the plan when porting into `ts-edit-gui`.
+
+```powershell
+$env:PATH="C:\Qt\6.11.1\msvc2022_64\bin;"+$env:PATH
+.\build-msvc\Release\ts-compare-viewer.exe
+$env:TSV_VIEW="58000,95000"; .\build-msvc\Release\ts-compare-viewer.exe  # zoom to a seam
+```
 
 ### Later drill-downs
-- PTS/DTS/PCR continuity graph (GUI of `tools/ts_pts_scan.py`)
+- per-piece continuity check across seams (PTS/DTS/PCR, CC) — GUI of `tools/ts_pts_scan.py`
+- stream/PSI diff (PIDs, ARIB caption, audio tracks preserved through the cut)
 - picture-type (I/P/B) / open-vs-closed GOP view

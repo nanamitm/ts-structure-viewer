@@ -10,12 +10,11 @@ Everything is built on a dependency-free (Qt-only) raw 188-byte TS parser
 (`TsScan`) — no libav/ffmpeg — because a structure/verification tool wants the
 packet-level PCR, CC, RAI and discontinuity flags a demuxer hides.
 
-Four small executables:
+Three small executables:
 
 | exe | what |
 |-----|------|
-| **`ts-inspector`** | open a real `.ts` → Structure (GOP/RAP), Streams (PSI), Timing (PTS/DTS/PCR), Pictures (I/P/B) |
-| **`ts-diff`** | diff a source vs its export → did captions/audio survive? where are the seams? |
+| **`ts-inspector`** | open a real `.ts` → Structure (GOP/RAP), Streams (PSI), Timing (PTS/DTS/PCR), Pictures (I/P/B). Open a second file (an export) to switch into source-vs-export **compare mode**: Streams becomes a PSI diff, Timing stacks A over B. |
 | `ts-structure-viewer` | the viewport structure widget with a smart-render plan overlay (synthetic data) |
 | `ts-compare-viewer` | source-vs-export structure alignment (synthetic data) |
 
@@ -85,7 +84,7 @@ $env:TSV_VIEW="58000,95000"; .\build-msvc\Release\ts-compare-viewer.exe  # zoom 
 ```
 
 ## Real-file inspector (`ts-inspector`)
-Scans an actual `.ts` and shows it in three tabs. Unlike the two viewers above
+Scans an actual `.ts` and shows it in four tabs. Unlike the two viewers above
 (synthetic data), this reads real files via `TsScan` — a dependency-free
 (Qt-only) raw 188-byte TS parser:
 
@@ -104,25 +103,22 @@ Scans an actual `.ts` and shows it in three tabs. Unlike the two viewers above
 CC errors — all in one pass. Validated against ts-edit-gui's libav scan (same
 RAP count, 3712, on the same source).
 
-```powershell
-$env:PATH="C:\Qt\6.11.1\msvc2022_64\bin;"+$env:PATH
-.\build-msvc\Release\ts-inspector.exe "path\to\file.ts"   # or File > Open
-```
+### Compare mode (source vs export)
+Open a second file (`File > Open Export (B) to compare...`, or pass it as a
+second argument) to verify a smart-render round trip:
 
-## Two-file diff (`ts-diff`)
-Scans a **source (A)** and an **export (B)** and verifies the smart-render round
-trip:
-
-- **Streams diff** — a merged PID table (A vs B kind/codec) with status
+- **Streams** becomes a merged PID diff (A vs B kind/codec) with status
   (same / changed / dropped / added) plus a summary line: caption and audio
   track counts preserved (OK / LOST / DROPPED) and B's PCR discontinuity (seam)
-  count. Answers "did the cut keep the ARIB captions and every audio track?"
-- **Timing** — A's and B's PTS/DTS/PCR graphs stacked; the export's seams show
-  up as discontinuity markers where the source is continuous.
+  count — answers "did the cut keep the ARIB captions and every audio track?"
+- **Timing** stacks A's and B's graphs; the export's seams show up as
+  discontinuity markers where the source is continuous.
+- **Structure** and **Pictures** keep showing A.
 
 ```powershell
 $env:PATH="C:\Qt\6.11.1\msvc2022_64\bin;"+$env:PATH
-.\build-msvc\Release\ts-diff.exe "source.ts" "export.ts"   # or File > Open A / B
+.\build-msvc\Release\ts-inspector.exe "path\to\file.ts"            # inspect one file
+.\build-msvc\Release\ts-inspector.exe "source.ts" "export.ts"      # compare mode
 ```
 
 Verified on a real round trip (ゆるゆり H.264 source + a 2-cut smart-render

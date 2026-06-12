@@ -203,6 +203,61 @@ QJsonArray reencodeDetailsJson(const TsScanResult& source, const QVector<Compare
     return a;
 }
 
+qint64 byteForVideoTime(const QVector<PesPoint>& points, qint64 ms)
+{
+    if (points.isEmpty())
+        return -1;
+    auto it = std::lower_bound(points.begin(), points.end(), ms,
+                               [](const PesPoint& p, qint64 t) { return p.ptsMs < t; });
+    if (it == points.end())
+        return points.last().byte;
+    if (it == points.begin())
+        return it->byte;
+    const auto prev = it - 1;
+    return std::llabs(prev->ptsMs - ms) <= std::llabs(it->ptsMs - ms) ? prev->byte : it->byte;
+}
+
+QJsonArray copyByteSampleJson(const QString& pathA, const QString& pathB,
+                              const TsScanResult& ra, const TsScanResult& rb,
+                              const QVector<CompareViewer::OutPiece>& pieces)
+{
+    constexpr qint64 kSampleBytes = 256 * 1024;
+    QFile fa(pathA), fb(pathB);
+    QJsonArray result;
+    if (!fa.open(QIODevice::ReadOnly) || !fb.open(QIODevice::ReadOnly))
+        return result;
+
+    int index = 0;
+    for (const auto& p : pieces) {
+        if (p.kind != CompareViewer::PieceKind::Copy)
+            continue;
+        const qint64 byteA = byteForVideoTime(ra.videoPts, p.srcStartMs);
+        const qint64 byteB = byteForVideoTime(rb.videoPts, p.outStartMs);
+        if (byteA < 0 || byteB < 0)
+            continue;
+        fa.seek(byteA);
+        fb.seek(byteB);
+        const QByteArray a = fa.read(kSampleBytes);
+        const QByteArray b = fb.read(kSampleBytes);
+        const int n = std::min(a.size(), b.size());
+        int equal = 0;
+        for (int i = 0; i < n; ++i)
+            if (a[i] == b[i])
+                ++equal;
+        QJsonObject o;
+        o["index"] = index++;
+        o["srcStartMs"] = QString::number(p.srcStartMs);
+        o["outStartMs"] = QString::number(p.outStartMs);
+        o["sourceByte"] = QString::number(byteA);
+        o["exportByte"] = QString::number(byteB);
+        o["comparedBytes"] = n;
+        o["equalBytes"] = equal;
+        o["equalPercent"] = n > 0 ? double(equal) * 100.0 / double(n) : 0.0;
+        result.push_back(o);
+    }
+    return result;
+}
+
 Verdict buildVerdict(const TsScanResult& ra, const TsScanResult& rb, bool hasB,
                      const QVector<ExpectedRange>& expected,
                      const QVector<CompareViewer::OutPiece>& pieces);
@@ -415,6 +470,7 @@ QJsonObject reportJson(const TsScanResult& ra, const QString& pathA,
         cmp["reencodePercent"] = outDur > 0 ? double(reencodeMs) * 100.0 / double(outDur) : 0.0;
         cmp["pieces"] = pieceArray;
         cmp["reencodeDetails"] = reencodeDetailsJson(ra, pieces);
+        cmp["copyByteSamples"] = copyByteSampleJson(pathA, pathB, ra, rb, pieces);
         cmp["expectedAlignment"] = expectedAlignmentJson(expectedAlignment(expected, pieces, rb.durationMs));
         cmp["verdict"] = verdictJson(buildVerdict(ra, rb, true, expected, pieces));
         root["compare"] = cmp;
@@ -499,6 +555,20 @@ QString reportHtml(const TsScanResult& ra, const QString& pathA,
                          .arg(o["frames"].toInt())
                          .arg(o["iFrames"].toInt()).arg(o["pFrames"].toInt())
                          .arg(o["bFrames"].toInt()).arg(o["unknownFrames"].toInt());
+            }
+            h += "</tbody></table>";
+        }
+        const auto samples = copyByteSampleJson(pathA, pathB, ra, rb, pieces);
+        if (!samples.isEmpty()) {
+            h += "<h2>Copy Byte Samples</h2><table><thead><tr><th>#</th><th>Source ms</th><th>Output ms</th><th>Source byte</th><th>Export byte</th><th>Compared</th><th>Equal %</th></tr></thead><tbody>";
+            for (const auto& v : samples) {
+                const auto o = v.toObject();
+                h += QString("<tr><td>%1</td><td>%2</td><td>%3</td><td>%4</td><td>%5</td><td>%6</td><td>%7</td></tr>")
+                         .arg(o["index"].toInt())
+                         .arg(o["srcStartMs"].toString(), o["outStartMs"].toString())
+                         .arg(o["sourceByte"].toString(), o["exportByte"].toString())
+                         .arg(o["comparedBytes"].toInt())
+                         .arg(o["equalPercent"].toDouble(), 0, 'f', 1);
             }
             h += "</tbody></table>";
         }

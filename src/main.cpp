@@ -141,6 +141,44 @@ QJsonObject expectedAlignmentJson(const ExpectedAlignment& a)
     return o;
 }
 
+QJsonArray reencodeDetailsJson(const TsScanResult& source, const QVector<CompareViewer::OutPiece>& pieces)
+{
+    QJsonArray a;
+    int index = 0;
+    for (const auto& p : pieces) {
+        if (p.kind != CompareViewer::PieceKind::Reencode)
+            continue;
+        int nI = 0, nP = 0, nB = 0, nU = 0;
+        for (const auto& f : source.frames) {
+            if (f.ptsMs < p.srcStartMs || f.ptsMs >= p.srcEndMs)
+                continue;
+            if (f.type == 'I')
+                ++nI;
+            else if (f.type == 'P')
+                ++nP;
+            else if (f.type == 'B')
+                ++nB;
+            else
+                ++nU;
+        }
+        QJsonObject o;
+        o["index"] = index++;
+        o["srcStartMs"] = QString::number(p.srcStartMs);
+        o["srcEndMs"] = QString::number(p.srcEndMs);
+        o["outStartMs"] = QString::number(p.outStartMs);
+        o["outEndMs"] = QString::number(p.outEndMs);
+        o["durationMs"] = QString::number(std::max<qint64>(0, p.outEndMs - p.outStartMs));
+        o["frames"] = nI + nP + nB + nU;
+        o["iFrames"] = nI;
+        o["pFrames"] = nP;
+        o["bFrames"] = nB;
+        o["unknownFrames"] = nU;
+        o["seamBefore"] = p.seamBefore;
+        a.push_back(o);
+    }
+    return a;
+}
+
 bool parseExpectedRanges(const QString& path, QVector<ExpectedRange>& ranges, QString& error)
 {
     QFile f(path);
@@ -346,6 +384,7 @@ QJsonObject reportJson(const TsScanResult& ra, const QString& pathA,
         cmp["copyPercent"] = outDur > 0 ? double(copyMs) * 100.0 / double(outDur) : 0.0;
         cmp["reencodePercent"] = outDur > 0 ? double(reencodeMs) * 100.0 / double(outDur) : 0.0;
         cmp["pieces"] = pieceArray;
+        cmp["reencodeDetails"] = reencodeDetailsJson(ra, pieces);
         cmp["expectedAlignment"] = expectedAlignmentJson(expectedAlignment(expected, pieces, rb.durationMs));
         root["compare"] = cmp;
     }
@@ -414,6 +453,22 @@ QString reportHtml(const TsScanResult& ra, const QString& pathA,
                      .arg(p.seamBefore ? "yes" : "");
         }
         h += "</tbody></table>";
+
+        const auto reenc = reencodeDetailsJson(ra, pieces);
+        if (!reenc.isEmpty()) {
+            h += "<h2>Re-encode Boundaries</h2><table><thead><tr><th>#</th><th>Source start</th><th>Source end</th><th>Output start</th><th>Output end</th><th>Frames</th><th>I/P/B/?</th></tr></thead><tbody>";
+            for (const auto& v : reenc) {
+                const auto o = v.toObject();
+                h += QString("<tr><td>%1</td><td>%2</td><td>%3</td><td>%4</td><td>%5</td><td>%6</td><td>%7/%8/%9/%10</td></tr>")
+                         .arg(o["index"].toInt())
+                         .arg(o["srcStartMs"].toString(), o["srcEndMs"].toString())
+                         .arg(o["outStartMs"].toString(), o["outEndMs"].toString())
+                         .arg(o["frames"].toInt())
+                         .arg(o["iFrames"].toInt()).arg(o["pFrames"].toInt())
+                         .arg(o["bFrames"].toInt()).arg(o["unknownFrames"].toInt());
+            }
+            h += "</tbody></table>";
+        }
     }
     return h;
 }
@@ -827,13 +882,20 @@ int main(int argc, char** argv)
         qint64 outDur = 0;
         qint64 copyMs = 0;
         qint64 reencodeMs = 0;
+        int reencodePieces = 0;
+        int reencodeFrames = 0;
         const auto pieces = buildComparePieces(ra, rb, outDur);
         for (const auto& p : pieces) {
             const qint64 dur = std::max<qint64>(0, p.outEndMs - p.outStartMs);
-            if (p.kind == CompareViewer::PieceKind::Copy)
+            if (p.kind == CompareViewer::PieceKind::Copy) {
                 copyMs += dur;
-            else
+            } else {
                 reencodeMs += dur;
+                ++reencodePieces;
+                for (const auto& f : ra.frames)
+                    if (f.ptsMs >= p.srcStartMs && f.ptsMs < p.srcEndMs)
+                        ++reencodeFrames;
+            }
         }
         const double copyPct = outDur > 0 ? double(copyMs) * 100.0 / double(outDur) : 0.0;
         const double reencodePct = outDur > 0 ? double(reencodeMs) * 100.0 / double(outDur) : 0.0;
@@ -851,14 +913,14 @@ int main(int argc, char** argv)
         summary->setText(
             QString("A %1 (%2 ms, %3 streams, RAP %4)   B %5 (%6 ms, %7 streams, RAP %8)\n"
                     "captions A=%9 B=%10 %11   audio A=%12 B=%13 %14   B seams (PCR discontinuities): %15   "
-                    "copy %16% (%17 ms)   re-encode %18% (%19 ms)%20%21")
+                    "copy %16% (%17 ms)   re-encode %18% (%19 ms, %20 boundaries, %21 frames)%22%23")
                 .arg(QFileInfo(pathA).fileName()).arg(ra.durationMs).arg(ra.streams.size()).arg(ra.rapMs.size())
                 .arg(QFileInfo(pathB).fileName()).arg(rb.durationMs).arg(rb.streams.size()).arg(rb.rapMs.size())
                 .arg(capA).arg(capB).arg(capB >= capA && capA > 0 ? "OK" : (capA == 0 ? "-" : "LOST"))
                 .arg(audA).arg(audB).arg(audB == audA ? "OK" : (audB < audA ? "DROPPED" : "+"))
                 .arg(seams)
                 .arg(copyPct, 0, 'f', 1).arg(copyMs)
-                .arg(reencodePct, 0, 'f', 1).arg(reencodeMs)
+                .arg(reencodePct, 0, 'f', 1).arg(reencodeMs).arg(reencodePieces).arg(reencodeFrames)
                 .arg(expectedText)
                 .arg(alignText));
     };

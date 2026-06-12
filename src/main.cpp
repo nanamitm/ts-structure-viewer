@@ -64,6 +64,22 @@ const TsStreamInfo* find(const TsScanResult& r, int pid)
     return nullptr;
 }
 
+bool sameTrackSignature(const TsStreamInfo& a, const TsStreamInfo& b)
+{
+    return a.kind == b.kind
+        && a.codec == b.codec
+        && a.language == b.language
+        && a.streamType == b.streamType;
+}
+
+const TsStreamInfo* findSameTrackDifferentPid(const TsScanResult& r, const TsStreamInfo& target)
+{
+    for (const auto& s : r.streams)
+        if (s.pid != target.pid && sameTrackSignature(s, target))
+            return &s;
+    return nullptr;
+}
+
 struct ExpectedRange {
     qint64 startMs = 0;
     qint64 endMs = 0;
@@ -855,11 +871,21 @@ int main(int argc, char** argv)
                 status = same ? "same" : "changed";
                 color = same ? QColor(150, 156, 166) : QColor(230, 200, 90);
             } else if (a) {
-                status = "dropped (A only)";
-                color = QColor(235, 110, 110);
+                if (const TsStreamInfo* moved = findSameTrackDifferentPid(rb, *a)) {
+                    status = QString("PID changed -> 0x%1").arg(moved->pid, 4, 16, QChar('0'));
+                    color = QColor(110, 170, 235);
+                } else {
+                    status = "dropped (A only)";
+                    color = QColor(235, 110, 110);
+                }
             } else {
-                status = "added (B only)";
-                color = QColor(110, 210, 140);
+                if (const TsStreamInfo* moved = findSameTrackDifferentPid(ra, *b)) {
+                    status = QString("PID changed from 0x%1").arg(moved->pid, 4, 16, QChar('0'));
+                    color = QColor(110, 170, 235);
+                } else {
+                    status = "added (B only)";
+                    color = QColor(110, 210, 140);
+                }
             }
             auto cell = [&](int c, const QString& t) {
                 auto* it = new QTableWidgetItem(t);

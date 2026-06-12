@@ -7,6 +7,7 @@
 #include "TsScanWorker.h"
 
 #include <QApplication>
+#include <QClipboard>
 #include <QEventLoop>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -16,6 +17,7 @@
 #include <QJsonObject>
 #include <QLabel>
 #include <QMainWindow>
+#include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QProgressDialog>
@@ -404,6 +406,49 @@ QString rangeDetailsText(const TsScanResult& r, qint64 startMs, qint64 endMs)
         .arg(nI + nP + nB + nU).arg(nI).arg(nP).arg(nB).arg(nU)
         .arg(videoPts).arg(audioPts).arg(pcr).arg(pcrDisc).arg(timedProblems);
 }
+
+QString tableRowTsv(const QTableWidget* table, int row, bool includeHeader)
+{
+    QStringList lines;
+    if (includeHeader) {
+        QStringList headers;
+        for (int c = 0; c < table->columnCount(); ++c) {
+            const auto* item = table->horizontalHeaderItem(c);
+            headers.push_back(item ? item->text() : QString());
+        }
+        lines.push_back(headers.join('\t'));
+    }
+
+    QStringList cells;
+    for (int c = 0; c < table->columnCount(); ++c) {
+        const auto* item = table->item(row, c);
+        QString text = item ? item->text() : QString();
+        text.replace('\t', ' ');
+        text.replace('\n', ' ');
+        cells.push_back(text);
+    }
+    lines.push_back(cells.join('\t'));
+    return lines.join('\n');
+}
+
+void installCopyRowMenu(QTableWidget* table)
+{
+    table->setContextMenuPolicy(Qt::CustomContextMenu);
+    QObject::connect(table, &QTableWidget::customContextMenuRequested, table, [table](const QPoint& pos) {
+        const int row = table->rowAt(pos.y());
+        if (row < 0)
+            return;
+        table->selectRow(row);
+
+        QMenu menu(table);
+        QAction* copyRow = menu.addAction("Copy Row");
+        QAction* copyWithHeader = menu.addAction("Copy Row with Header");
+        QAction* chosen = menu.exec(table->viewport()->mapToGlobal(pos));
+        if (!chosen)
+            return;
+        QApplication::clipboard()->setText(tableRowTsv(table, row, chosen == copyWithHeader));
+    });
+}
 } // namespace
 
 int main(int argc, char** argv)
@@ -478,6 +523,7 @@ int main(int argc, char** argv)
     table->horizontalHeader()->setStretchLastSection(true);
     table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    installCopyRowMenu(table);
     streamsLayout->addWidget(summary);
     streamsLayout->addWidget(table, 1);
 
@@ -507,6 +553,7 @@ int main(int argc, char** argv)
     problemsTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
     problemsTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     problemsTable->setSelectionMode(QAbstractItemView::SingleSelection);
+    installCopyRowMenu(problemsTable);
     problemsLayout->addWidget(problemsSummary);
     problemsLayout->addWidget(problemsTable, 1);
 

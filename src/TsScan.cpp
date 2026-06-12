@@ -278,8 +278,10 @@ TsScanResult TsScan::scanFile(const QString& path, const std::function<bool(qint
             if (afc & 1) {
                 if (lastCc.contains(pid)) {
                     const int expected = (lastCc[pid] + 1) & 0x0F;
-                    if (cc != expected && cc != lastCc[pid]) // dup (==) is allowed
+                    if (cc != expected && cc != lastCc[pid]) { // dup (==) is allowed
                         r.ccErrors[pid] += 1;
+                        r.ccErrorPoints.push_back(CcErrorPoint{ pid, byte, expected, cc });
+                    }
                 }
                 lastCc[pid] = cc;
             }

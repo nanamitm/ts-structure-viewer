@@ -94,6 +94,17 @@ QJsonObject scanJson(const TsScanResult& r, const QString& path)
         pcrDiscontinuities.push_back(o);
     }
 
+    QJsonArray ccErrorDetails;
+    for (const auto& e : r.ccErrorPoints) {
+        QJsonObject o;
+        o["pid"] = e.pid;
+        o["pidHex"] = QString("0x%1").arg(e.pid, 4, 16, QChar('0'));
+        o["byte"] = QString::number(e.byte);
+        o["expected"] = e.expected;
+        o["actual"] = e.actual;
+        ccErrorDetails.push_back(o);
+    }
+
     QJsonObject o;
     o["path"] = path;
     o["fileName"] = QFileInfo(path).fileName();
@@ -114,6 +125,7 @@ QJsonObject scanJson(const TsScanResult& r, const QString& path)
     o["captionCount"] = captionCount(r);
     o["audioCount"] = audioCount(r);
     o["ccErrorTotal"] = QString::number(ccTotal);
+    o["ccErrorDetails"] = ccErrorDetails;
     o["pcrDiscontinuityCount"] = pcrDiscontinuities.size();
     o["pcrDiscontinuities"] = pcrDiscontinuities;
     o["streams"] = streamsJson(r);
@@ -252,6 +264,84 @@ bool saveTextFile(const QString& path, const QByteArray& bytes, QString& error)
     }
     return true;
 }
+
+struct Problem {
+    QString fileLabel;
+    QString severity;
+    QString type;
+    qint64 timeMs = -1;
+    qint64 byte = -1;
+    QString detail;
+};
+
+template <typename Point, typename GetMs, typename GetByte>
+void addTimingProblems(QVector<Problem>& problems, const QVector<Point>& points,
+                       const QString& fileLabel, const QString& series,
+                       GetMs getMs, GetByte getByte)
+{
+    constexpr qint64 kGapMs = 5000;
+    for (int i = 1; i < points.size(); ++i) {
+        const qint64 prev = getMs(points[i - 1]);
+        const qint64 cur = getMs(points[i]);
+        const qint64 delta = cur - prev;
+        if (delta < -100) {
+            problems.push_back(Problem{ fileLabel, "error", series + " backward jump", cur, getByte(points[i]),
+                                        QString("previous %1 ms, current %2 ms").arg(prev).arg(cur) });
+        } else if (delta > kGapMs) {
+            problems.push_back(Problem{ fileLabel, "warning", series + " gap", cur, getByte(points[i]),
+                                        QString("gap %1 ms from %2 to %3").arg(delta).arg(prev).arg(cur) });
+        }
+    }
+}
+
+QVector<Problem> collectProblemsOne(const TsScanResult& r, const QString& label)
+{
+    QVector<Problem> problems;
+    for (const auto& p : r.pcr) {
+        if (p.discontinuity)
+            problems.push_back(Problem{ label, "warning", "PCR discontinuity", p.pcrMs, p.byte,
+                                        "adaptation_field.discontinuity_indicator is set" });
+    }
+    for (const auto& e : r.ccErrorPoints) {
+        problems.push_back(Problem{ label, "error", "CC error", -1, e.byte,
+                                    QString("PID 0x%1 expected %2, got %3")
+                                        .arg(e.pid, 4, 16, QChar('0')).arg(e.expected).arg(e.actual) });
+    }
+
+    addTimingProblems(problems, r.videoPts, label, "video PTS",
+                      [](const PesPoint& p) { return p.ptsMs; },
+                      [](const PesPoint& p) { return p.byte; });
+    addTimingProblems(problems, r.audioPts, label, "audio PTS",
+                      [](const PesPoint& p) { return p.ptsMs; },
+                      [](const PesPoint& p) { return p.byte; });
+    addTimingProblems(problems, r.pcr, label, "PCR",
+                      [](const PcrPoint& p) { return p.pcrMs; },
+                      [](const PcrPoint& p) { return p.byte; });
+
+    std::sort(problems.begin(), problems.end(), [](const Problem& a, const Problem& b) {
+        if (a.fileLabel != b.fileLabel)
+            return a.fileLabel < b.fileLabel;
+        if (a.timeMs >= 0 && b.timeMs >= 0)
+            return a.timeMs < b.timeMs;
+        if (a.timeMs >= 0)
+            return true;
+        if (b.timeMs >= 0)
+            return false;
+        return a.byte < b.byte;
+    });
+    return problems;
+}
+
+QVector<Problem> collectProblems(const TsScanResult& ra, const QString& pathA,
+                                 const TsScanResult& rb, const QString& pathB, bool hasB)
+{
+    QVector<Problem> problems = collectProblemsOne(ra, QString("A: %1").arg(QFileInfo(pathA).fileName()));
+    if (hasB) {
+        const auto b = collectProblemsOne(rb, QString("B: %1").arg(QFileInfo(pathB).fileName()));
+        problems += b;
+    }
+    return problems;
+}
 } // namespace
 
 int main(int argc, char** argv)
@@ -294,6 +384,21 @@ int main(int argc, char** argv)
     labB->setVisible(false);
     graphB->setVisible(false);
 
+    // Problems tab: detected discontinuities, timing jumps/gaps and CC errors.
+    auto* problemsPane = new QWidget(&win);
+    auto* problemsLayout = new QVBoxLayout(problemsPane);
+    auto* problemsSummary = new QLabel(QStringLiteral("Open a TS file to scan for problems"), problemsPane);
+    problemsSummary->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    problemsSummary->setWordWrap(true);
+    auto* problemsTable = new QTableWidget(0, 6, problemsPane);
+    problemsTable->setHorizontalHeaderLabels({ "File", "Severity", "Type", "Time", "Byte", "Detail" });
+    problemsTable->horizontalHeader()->setStretchLastSection(true);
+    problemsTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    problemsTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+    problemsTable->setSelectionMode(QAbstractItemView::SingleSelection);
+    problemsLayout->addWidget(problemsSummary);
+    problemsLayout->addWidget(problemsTable, 1);
+
     // Compare tab: source-vs-export structure alignment, added only in compare
     // mode (the recovered copy / re-encode / dropped plan over a shared source axis).
     // Hide until it's added as a tab, else this not-yet-placed child paints its
@@ -304,6 +409,7 @@ int main(int argc, char** argv)
     tabs->addTab(structure, "Structure");
     tabs->addTab(streamsPane, "Streams");
     tabs->addTab(timingPane, "Timing");
+    tabs->addTab(problemsPane, "Problems");
     tabs->addTab(pics, "Pictures");
     win.setCentralWidget(tabs);
 
@@ -392,6 +498,33 @@ int main(int argc, char** argv)
                 .arg(seams));
     };
 
+    auto buildProblems = [&] {
+        const auto problems = collectProblems(ra, pathA, rb, pathB, hasB);
+        problemsTable->setRowCount(problems.size());
+        int errors = 0;
+        int warnings = 0;
+        for (int i = 0; i < problems.size(); ++i) {
+            const auto& p = problems[i];
+            if (p.severity == "error")
+                ++errors;
+            else
+                ++warnings;
+            const QColor color = p.severity == "error" ? QColor(210, 75, 75) : QColor(190, 135, 45);
+            const QString timeText = p.timeMs >= 0 ? QString::number(p.timeMs) : QString("-");
+            const QString byteText = p.byte >= 0 ? QString::number(p.byte) : QString("-");
+            const QStringList cells = { p.fileLabel, p.severity, p.type, timeText, byteText, p.detail };
+            for (int c = 0; c < cells.size(); ++c) {
+                auto* it = new QTableWidgetItem(cells[c]);
+                it->setForeground(color);
+                it->setData(Qt::UserRole, p.timeMs);
+                problemsTable->setItem(i, c, it);
+            }
+        }
+        problemsTable->resizeColumnsToContents();
+        problemsSummary->setText(QString("%1 problems: %2 errors, %3 warnings. Double-click a timed row to zoom there.")
+                                     .arg(problems.size()).arg(errors).arg(warnings));
+    };
+
     auto refresh = [&] {
         if (!ra.ok)
             return;
@@ -411,6 +544,7 @@ int main(int argc, char** argv)
         } else {
             buildStreamsSingle();
         }
+        buildProblems();
         labB->setVisible(hasB);
         graphB->setVisible(hasB);
 
@@ -505,6 +639,41 @@ int main(int argc, char** argv)
         hasB = true;
         refresh();
     };
+
+    QObject::connect(problemsTable, &QTableWidget::itemDoubleClicked, &win, [&](QTableWidgetItem* item) {
+        if (!item)
+            return;
+        const qint64 problemMs = item->data(Qt::UserRole).toLongLong();
+        if (problemMs < 0) {
+            win.statusBar()->showMessage(QStringLiteral("This problem has a byte position but no timeline timestamp"), 5000);
+            return;
+        }
+
+        qint64 srcMs = problemMs;
+        const QString fileLabel = problemsTable->item(item->row(), 0)->text();
+        bool mappedFromB = false;
+        if (hasB && fileLabel.startsWith("B:")) {
+            qint64 outDur = 0;
+            const auto pieces = buildComparePieces(ra, rb, outDur);
+            for (const auto& p : pieces) {
+                if (problemMs >= p.outStartMs && problemMs <= p.outEndMs) {
+                    srcMs = p.srcStartMs + (problemMs - p.outStartMs);
+                    mappedFromB = true;
+                    break;
+                }
+            }
+        }
+
+        const qint64 radius = 5000;
+        const qint64 start = std::max<qint64>(0, srcMs - radius);
+        const qint64 end = std::max<qint64>(start + 1, std::min<qint64>(ra.durationMs, srcMs + radius));
+        structure->setView(start, end);
+        pics->setView(start, end);
+        if (hasB)
+            compare->setView(start, end);
+        tabs->setCurrentWidget(mappedFromB && hasB ? static_cast<QWidget*>(compare) : static_cast<QWidget*>(structure));
+        win.statusBar()->showMessage(QString("Jumped to %1 ms").arg(srcMs), 4000);
+    });
 
     auto* fileMenu = win.menuBar()->addMenu("&File");
     auto* openAct = fileMenu->addAction("&Open TS...");

@@ -39,6 +39,13 @@ struct PcrPoint {
     bool discontinuity = false;
 };
 
+struct CcErrorPoint {
+    int pid = -1;
+    qint64 byte = 0;
+    int expected = -1;
+    int actual = -1;
+};
+
 // One coded video picture (access unit), typed from the elementary stream.
 struct FramePic {
     qint64 ptsMs = 0;
@@ -71,6 +78,7 @@ struct TsScanResult {
     QVector<PcrPoint> pcr;       // PCR samples (relative)
 
     QMap<int, int> ccErrors;     // PID -> continuity-counter discontinuities
+    QVector<CcErrorPoint> ccErrorPoints;
 };
 
 class TsScan {

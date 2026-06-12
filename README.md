@@ -1,6 +1,6 @@
 # ts-structure-viewer
 
-`ts-inspector` — a Qt6/C++ tool for inspecting **MPEG-2 TS** structure and
+`ts-structure-viewer` — a Qt6/C++ tool for inspecting **MPEG-2 TS** structure and
 verifying **smart-rendering** (frame-accurate, mostly-lossless cut) exports.
 Companion to the editor
 [`ts-edit-gui`](https://github.com/nanamitm/ts-edit-gui): when a cut copies whole
@@ -69,15 +69,15 @@ standalone — no Qt on PATH needed.
 
 ## Run
 ```powershell
-.\build-msvc\Release\ts-inspector.exe "path\to\file.ts"        # inspect one file
-.\build-msvc\Release\ts-inspector.exe "source.ts" "export.ts"  # compare mode
+.\build-msvc\Release\ts-structure-viewer.exe "path\to\file.ts"        # inspect one file
+.\build-msvc\Release\ts-structure-viewer.exe "source.ts" "export.ts"  # compare mode
 ```
 
 ## History
 This repo started as a sandbox of synthetic-data viewers for prototyping the
 structure/compare widgets (and a brief, since-reverted integration into
 `ts-edit-gui`). Those prototypes have been folded into the single real tool,
-`ts-inspector`; `ts-edit-gui` stays focused on editing, and the structure /
+`ts-structure-viewer`; `ts-edit-gui` stays focused on editing, and the structure /
 verification tooling lives here.
 
 ## License

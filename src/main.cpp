@@ -23,7 +23,7 @@
 #include <QVBoxLayout>
 #include <algorithm>
 
-// Real-file TS inspector. Open one file (A) to inspect its structure (GOP/RAP),
+// Real-file TS structure viewer. Open one file (A) to inspect its structure (GOP/RAP),
 // elementary streams (PSI), PTS/DTS/PCR timing and per-frame picture types.
 // Open a second file (B, an export of A) to switch into compare mode: the
 // Streams tab becomes a PID/PSI diff (did captions/audio survive the cut?) and
@@ -58,11 +58,11 @@ const TsStreamInfo* find(const TsScanResult& r, int pid)
 int main(int argc, char** argv)
 {
     QApplication app(argc, argv);
-    QApplication::setApplicationName(QStringLiteral("ts-inspector"));
+    QApplication::setApplicationName(QStringLiteral("ts-structure-viewer"));
     qRegisterMetaType<TsScanResult>(); // so it can cross the worker thread boundary
 
     QMainWindow win;
-    win.setWindowTitle(QStringLiteral("TS Inspector"));
+    win.setWindowTitle(QStringLiteral("TS Structure Viewer"));
 
     auto* tabs = new QTabWidget(&win);
     auto* structure = new StructureViewer(&win);
@@ -241,8 +241,8 @@ int main(int argc, char** argv)
             }
         }
         win.setWindowTitle(hasB
-            ? QString("TS Inspector - %1  vs  %2").arg(QFileInfo(pathA).fileName(), QFileInfo(pathB).fileName())
-            : QString("TS Inspector - %1").arg(QFileInfo(pathA).fileName()));
+            ? QString("TS Structure Viewer - %1  vs  %2").arg(QFileInfo(pathA).fileName(), QFileInfo(pathB).fileName())
+            : QString("TS Structure Viewer - %1").arg(QFileInfo(pathA).fileName()));
     };
 
     // Scans on a background thread; the UI stays live via a local event loop that

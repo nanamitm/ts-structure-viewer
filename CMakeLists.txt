@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(ts-inspector LANGUAGES CXX)
+project(ts-structure-viewer LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -11,15 +11,15 @@ set(CMAKE_AUTOMOC ON)
 #   cmake --build build-msvc --config Release
 # The Qt runtime is deployed next to the .exe (windeployqt), so it runs
 # standalone:
-#   .\build-msvc\Release\ts-inspector.exe "path\to\file.ts"
+#   .\build-msvc\Release\ts-structure-viewer.exe "path\to\file.ts"
 find_package(Qt6 REQUIRED COMPONENTS Widgets)
 
-# Real-file TS inspector: scans an actual .ts (TsScan, on a background thread)
-# and shows its structure (GOP/RAP) / streams (PSI) / timing (PTS/DTS/PCR) /
-# picture types (I/P/B). Open a second file to switch into source-vs-export
-# compare mode (PSI diff + stacked timing).
-add_executable(ts-inspector
-    src/inspector_main.cpp
+# Real-file TS structure viewer: scans an actual .ts (TsScan, on a background
+# thread) and shows its structure (GOP/RAP) / streams (PSI) / timing (PTS/DTS/
+# PCR) / picture types (I/P/B). Open a second file to switch into source-vs-
+# export compare mode (PSI diff + stacked timing + structure alignment).
+add_executable(ts-structure-viewer
+    src/main.cpp
     src/TsScan.h            src/TsScan.cpp
     src/TsScanWorker.h      src/TsScanWorker.cpp
     src/PtsGraphWidget.h    src/PtsGraphWidget.cpp
@@ -28,18 +28,18 @@ add_executable(ts-inspector
     src/CompareViewer.h     src/CompareViewer.cpp
     src/CompareMap.h        src/CompareMap.cpp
 )
-target_link_libraries(ts-inspector PRIVATE Qt6::Widgets)
+target_link_libraries(ts-structure-viewer PRIVATE Qt6::Widgets)
 
 if (WIN32)
-    set_target_properties(ts-inspector PROPERTIES WIN32_EXECUTABLE ON)
+    set_target_properties(ts-structure-viewer PROPERTIES WIN32_EXECUTABLE ON)
 
     # Deploy the Qt runtime DLLs + plugins next to the .exe (windeployqt) so it
     # runs standalone without Qt on PATH.
     find_program(WINDEPLOYQT_EXECUTABLE windeployqt HINTS "${Qt6_DIR}/../../../bin")
     if (WINDEPLOYQT_EXECUTABLE)
-        add_custom_command(TARGET ts-inspector POST_BUILD
+        add_custom_command(TARGET ts-structure-viewer POST_BUILD
             COMMAND "${WINDEPLOYQT_EXECUTABLE}" --release --no-translations
-                    --no-system-d3d-compiler --no-opengl-sw "$<TARGET_FILE:ts-inspector>"
-            COMMENT "Deploying Qt runtime for ts-inspector" VERBATIM)
+                    --no-system-d3d-compiler --no-opengl-sw "$<TARGET_FILE:ts-structure-viewer>"
+            COMMENT "Deploying Qt runtime for ts-structure-viewer" VERBATIM)
     endif()
 endif()

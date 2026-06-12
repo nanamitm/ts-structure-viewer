@@ -9,6 +9,7 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QEventLoop>
+#include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QHeaderView>
@@ -21,6 +22,7 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QProgressDialog>
+#include <QRegularExpression>
 #include <QSaveFile>
 #include <QSet>
 #include <QStatusBar>
@@ -60,6 +62,94 @@ const TsStreamInfo* find(const TsScanResult& r, int pid)
         if (s.pid == pid)
             return &s;
     return nullptr;
+}
+
+struct ExpectedRange {
+    qint64 startMs = 0;
+    qint64 endMs = 0;
+};
+
+qint64 expectedDurationMs(const QVector<ExpectedRange>& ranges)
+{
+    qint64 total = 0;
+    for (const auto& r : ranges)
+        total += std::max<qint64>(0, r.endMs - r.startMs);
+    return total;
+}
+
+QJsonArray expectedRangesJson(const QVector<ExpectedRange>& ranges)
+{
+    QJsonArray a;
+    for (const auto& r : ranges) {
+        QJsonObject o;
+        o["startMs"] = QString::number(r.startMs);
+        o["endMs"] = QString::number(r.endMs);
+        o["durationMs"] = QString::number(std::max<qint64>(0, r.endMs - r.startMs));
+        a.push_back(o);
+    }
+    return a;
+}
+
+bool parseExpectedRanges(const QString& path, QVector<ExpectedRange>& ranges, QString& error)
+{
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) {
+        error = f.errorString();
+        return false;
+    }
+    const QByteArray bytes = f.readAll();
+    QVector<ExpectedRange> parsed;
+
+    if (QFileInfo(path).suffix().compare("json", Qt::CaseInsensitive) == 0) {
+        QJsonParseError parseError;
+        const QJsonDocument doc = QJsonDocument::fromJson(bytes, &parseError);
+        if (parseError.error != QJsonParseError::NoError) {
+            error = parseError.errorString();
+            return false;
+        }
+        QJsonArray a;
+        if (doc.isArray())
+            a = doc.array();
+        else if (doc.isObject())
+            a = doc.object().value("ranges").toArray();
+        for (const auto& v : a) {
+            const QJsonObject o = v.toObject();
+            const qint64 s = qint64(o.value("startMs").toVariant().toLongLong());
+            const qint64 e = qint64(o.value("endMs").toVariant().toLongLong());
+            const qint64 in = qint64(o.value("inMs").toVariant().toLongLong());
+            const qint64 out = qint64(o.value("outMs").toVariant().toLongLong());
+            parsed.push_back(ExpectedRange{ e > s ? s : in, e > s ? e : out });
+        }
+    } else {
+        const QString text = QString::fromUtf8(bytes);
+        const auto lines = text.split(QRegularExpression("[\r\n]+"), Qt::SkipEmptyParts);
+        for (QString line : lines) {
+            line = line.trimmed();
+            if (line.isEmpty() || line.startsWith('#'))
+                continue;
+            const auto fields = line.split(QRegularExpression("[,;\\t ]+"), Qt::SkipEmptyParts);
+            if (fields.size() < 2)
+                continue;
+            bool okS = false, okE = false;
+            const qint64 s = fields[0].toLongLong(&okS);
+            const qint64 e = fields[1].toLongLong(&okE);
+            if (okS && okE)
+                parsed.push_back(ExpectedRange{ s, e });
+        }
+    }
+
+    parsed.erase(std::remove_if(parsed.begin(), parsed.end(),
+                                [](const ExpectedRange& r) { return r.endMs <= r.startMs; }),
+                 parsed.end());
+    std::sort(parsed.begin(), parsed.end(), [](const ExpectedRange& a, const ExpectedRange& b) {
+        return a.startMs < b.startMs;
+    });
+    if (parsed.isEmpty()) {
+        error = QStringLiteral("No valid ranges found");
+        return false;
+    }
+    ranges = parsed;
+    return true;
 }
 
 QJsonArray streamsJson(const TsScanResult& r)
@@ -155,13 +245,22 @@ QString htmlScanTable(const TsScanResult& r)
 }
 
 QJsonObject reportJson(const TsScanResult& ra, const QString& pathA,
-                       const TsScanResult& rb, const QString& pathB, bool hasB)
+                       const TsScanResult& rb, const QString& pathB, bool hasB,
+                       const QVector<ExpectedRange>& expected = {}, const QString& expectedPath = {})
 {
     QJsonObject root;
     root["tool"] = "ts-structure-viewer";
     root["formatVersion"] = 1;
     root["mode"] = hasB ? "compare" : "single";
     root["source"] = scanJson(ra, pathA);
+    if (!expected.isEmpty()) {
+        QJsonObject e;
+        e["path"] = expectedPath;
+        e["rangeCount"] = expected.size();
+        e["durationMs"] = QString::number(expectedDurationMs(expected));
+        e["ranges"] = expectedRangesJson(expected);
+        root["expected"] = e;
+    }
 
     if (hasB) {
         qint64 outDur = 0;
@@ -202,7 +301,8 @@ QJsonObject reportJson(const TsScanResult& ra, const QString& pathA,
 }
 
 QString reportHtml(const TsScanResult& ra, const QString& pathA,
-                   const TsScanResult& rb, const QString& pathB, bool hasB)
+                   const TsScanResult& rb, const QString& pathB, bool hasB,
+                   const QVector<ExpectedRange>& expected = {}, const QString& expectedPath = {})
 {
     QString h = "<!doctype html><meta charset=\"utf-8\"><title>TS Structure Report</title>"
                 "<style>body{font:14px/1.45 Segoe UI,Arial,sans-serif;margin:24px;color:#202124}"
@@ -215,6 +315,16 @@ QString reportHtml(const TsScanResult& ra, const QString& pathA,
              .arg(htmlEsc(pathA)).arg(ra.durationMs).arg(ra.rapMs.size()).arg(ra.streams.size())
              .arg(captionCount(ra)).arg(audioCount(ra));
     h += htmlScanTable(ra);
+    if (!expected.isEmpty()) {
+        h += QString("<h2>Expected Cuts</h2><p><b>%1</b><br>%2 ranges / expected output %3 ms</p>")
+                 .arg(htmlEsc(expectedPath)).arg(expected.size()).arg(expectedDurationMs(expected));
+        h += "<table><thead><tr><th>Start ms</th><th>End ms</th><th>Duration ms</th></tr></thead><tbody>";
+        for (const auto& r : expected) {
+            h += QString("<tr><td>%1</td><td>%2</td><td>%3</td></tr>")
+                     .arg(r.startMs).arg(r.endMs).arg(r.endMs - r.startMs);
+        }
+        h += "</tbody></table>";
+    }
 
     if (hasB) {
         qint64 outDur = 0;
@@ -583,6 +693,8 @@ int main(int argc, char** argv)
     TsScanResult ra, rb;
     QString pathA, pathB;
     bool hasB = false;
+    QVector<ExpectedRange> expectedRanges;
+    QString expectedPath;
 
     auto buildStreamsSingle = [&] {
         table->setColumnCount(5);
@@ -667,17 +779,24 @@ int main(int argc, char** argv)
         }
         const double copyPct = outDur > 0 ? double(copyMs) * 100.0 / double(outDur) : 0.0;
         const double reencodePct = outDur > 0 ? double(reencodeMs) * 100.0 / double(outDur) : 0.0;
+        const QString expectedText = expectedRanges.isEmpty()
+            ? QString()
+            : QString("   expected cuts: %1 ranges / %2 ms / B delta %3 ms")
+                  .arg(expectedRanges.size())
+                  .arg(expectedDurationMs(expectedRanges))
+                  .arg(rb.durationMs - expectedDurationMs(expectedRanges));
         summary->setText(
             QString("A %1 (%2 ms, %3 streams, RAP %4)   B %5 (%6 ms, %7 streams, RAP %8)\n"
                     "captions A=%9 B=%10 %11   audio A=%12 B=%13 %14   B seams (PCR discontinuities): %15   "
-                    "copy %16% (%17 ms)   re-encode %18% (%19 ms)")
+                    "copy %16% (%17 ms)   re-encode %18% (%19 ms)%20")
                 .arg(QFileInfo(pathA).fileName()).arg(ra.durationMs).arg(ra.streams.size()).arg(ra.rapMs.size())
                 .arg(QFileInfo(pathB).fileName()).arg(rb.durationMs).arg(rb.streams.size()).arg(rb.rapMs.size())
                 .arg(capA).arg(capB).arg(capB >= capA && capA > 0 ? "OK" : (capA == 0 ? "-" : "LOST"))
                 .arg(audA).arg(audB).arg(audB == audA ? "OK" : (audB < audA ? "DROPPED" : "+"))
                 .arg(seams)
                 .arg(copyPct, 0, 'f', 1).arg(copyMs)
-                .arg(reencodePct, 0, 'f', 1).arg(reencodeMs));
+                .arg(reencodePct, 0, 'f', 1).arg(reencodeMs)
+                .arg(expectedText));
     };
 
     auto buildProblems = [&] {
@@ -813,6 +932,8 @@ int main(int argc, char** argv)
         pathA = path;
         rb = TsScanResult{};   // a new source clears the comparison
         hasB = false;
+        expectedRanges.clear();
+        expectedPath.clear();
         rangeSummary->setText(QStringLiteral("Shift-drag a range in the Structure tab"));
         refresh();
     };
@@ -826,6 +947,23 @@ int main(int argc, char** argv)
         pathB = path;
         hasB = true;
         refresh();
+    };
+
+    auto openExpected = [&](const QString& path) {
+        QVector<ExpectedRange> parsed;
+        QString error;
+        if (!parseExpectedRanges(path, parsed, error)) {
+            QMessageBox::warning(&win, "Open expected cuts failed", error);
+            return;
+        }
+        expectedRanges = parsed;
+        expectedPath = path;
+        win.statusBar()->showMessage(
+            QString("Loaded expected cuts: %1 ranges, %2 ms")
+                .arg(expectedRanges.size()).arg(expectedDurationMs(expectedRanges)),
+            6000);
+        if (ra.ok)
+            refresh();
     };
 
     QObject::connect(problemsTable, &QTableWidget::itemDoubleClicked, &win, [&](QTableWidgetItem* item) {
@@ -885,6 +1023,12 @@ int main(int argc, char** argv)
         if (!p.isEmpty())
             openB(p);
     });
+    QObject::connect(fileMenu->addAction("Open Expected &Cuts..."), &QAction::triggered, &win, [&] {
+        const QString p = QFileDialog::getOpenFileName(&win, "Open expected cuts", QString(),
+                                                       "Expected cuts (*.json *.csv *.txt);;All files (*)");
+        if (!p.isEmpty())
+            openExpected(p);
+    });
     fileMenu->addSeparator();
 
     auto saveReport = [&](bool html) {
@@ -904,8 +1048,8 @@ int main(int argc, char** argv)
             path += ".json";
 
         const QByteArray bytes = html
-            ? reportHtml(ra, pathA, rb, pathB, hasB).toUtf8()
-            : QJsonDocument(reportJson(ra, pathA, rb, pathB, hasB)).toJson(QJsonDocument::Indented);
+            ? reportHtml(ra, pathA, rb, pathB, hasB, expectedRanges, expectedPath).toUtf8()
+            : QJsonDocument(reportJson(ra, pathA, rb, pathB, hasB, expectedRanges, expectedPath)).toJson(QJsonDocument::Indented);
         QString error;
         if (!saveTextFile(path, bytes, error)) {
             QMessageBox::warning(&win, "Save report failed", error);

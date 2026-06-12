@@ -35,6 +35,7 @@ target_link_libraries(ts-compare-viewer PRIVATE Qt6::Widgets)
 add_executable(ts-inspector
     src/inspector_main.cpp
     src/TsScan.h            src/TsScan.cpp
+    src/TsScanWorker.h      src/TsScanWorker.cpp
     src/PtsGraphWidget.h    src/PtsGraphWidget.cpp
     src/PicTypeWidget.h     src/PicTypeWidget.cpp
     src/StructureViewer.h   src/StructureViewer.cpp

@@ -2,8 +2,10 @@
 #include "PtsGraphWidget.h"
 #include "StructureViewer.h"
 #include "TsScan.h"
+#include "TsScanWorker.h"
 
 #include <QApplication>
+#include <QEventLoop>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QHeaderView>
@@ -15,6 +17,7 @@
 #include <QStatusBar>
 #include <QTabWidget>
 #include <QTableWidget>
+#include <QThread>
 #include <QVBoxLayout>
 #include <algorithm>
 
@@ -54,6 +57,7 @@ int main(int argc, char** argv)
 {
     QApplication app(argc, argv);
     QApplication::setApplicationName(QStringLiteral("ts-inspector"));
+    qRegisterMetaType<TsScanResult>(); // so it can cross the worker thread boundary
 
     QMainWindow win;
     win.setWindowTitle(QStringLiteral("TS Inspector"));
@@ -215,16 +219,40 @@ int main(int argc, char** argv)
             : QString("TS Inspector - %1").arg(QFileInfo(pathA).fileName()));
     };
 
+    // Scans on a background thread; the UI stays live via a local event loop that
+    // quits when the worker finishes (or after a cancel takes effect).
     auto scan = [&](const QString& path, TsScanResult& out) {
+        QThread thread;
+        TsScanWorker worker;
+        worker.configure(path);
+        worker.moveToThread(&thread);
+
         QProgressDialog dlg(QString("Scanning %1...").arg(QFileInfo(path).fileName()),
                             "Cancel", 0, 1000, &win);
         dlg.setWindowModality(Qt::WindowModal);
         dlg.setMinimumDuration(0);
-        out = TsScan::scanFile(path, [&](qint64 d, qint64 t) {
+        dlg.setAutoClose(false);
+        dlg.setAutoReset(false);
+
+        QObject::connect(&worker, &TsScanWorker::progress, &dlg, [&dlg](qint64 d, qint64 t) {
             dlg.setValue(t > 0 ? int(d * 1000 / t) : 0);
-            QApplication::processEvents();
-            return !dlg.wasCanceled();
         });
+        QObject::connect(&dlg, &QProgressDialog::canceled, &worker, &TsScanWorker::cancel);
+
+        QEventLoop loop;
+        QObject::connect(&worker, &TsScanWorker::finished, &loop, [&](const TsScanResult& r) {
+            out = r;
+            loop.quit();
+        });
+        QObject::connect(&thread, &QThread::started, &worker, &TsScanWorker::run);
+
+        thread.start();
+        dlg.show();
+        loop.exec();
+        thread.quit();
+        thread.wait();
+        dlg.close();
+
         if (!out.ok)
             win.statusBar()->showMessage(QString("Scan failed: %1").arg(out.error), 6000);
         return out.ok;

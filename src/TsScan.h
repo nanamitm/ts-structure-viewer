@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QMap>
+#include <QMetaType>
 #include <QString>
 #include <QVector>
 #include <cstdint>
@@ -78,3 +79,6 @@ public:
     static TsScanResult scanFile(const QString& path,
                                  const std::function<bool(qint64, qint64)>& progress = {});
 };
+
+// So TsScanResult can cross threads via a queued signal (see TsScanWorker).
+Q_DECLARE_METATYPE(TsScanResult)

@@ -1075,6 +1075,7 @@ int main(int argc, char** argv)
     bool hasB = false;
     QVector<ExpectedRange> expectedRanges;
     QString expectedPath;
+    int seamCursor = -1;
 
     auto buildStreamsSingle = [&] {
         table->setColumnCount(5);
@@ -1340,6 +1341,7 @@ int main(int argc, char** argv)
         pathA = path;
         rb = TsScanResult{};   // a new source clears the comparison
         hasB = false;
+        seamCursor = -1;
         expectedRanges.clear();
         expectedPath.clear();
         rangeSummary->setText(QStringLiteral("Shift-drag a range in the Structure tab"));
@@ -1354,6 +1356,7 @@ int main(int argc, char** argv)
             return;
         pathB = path;
         hasB = true;
+        seamCursor = -1;
         refresh();
     };
 
@@ -1416,6 +1419,37 @@ int main(int argc, char** argv)
         tabs->setCurrentWidget(rangePane);
     });
 
+    auto jumpSeam = [&](int direction) {
+        if (!hasB) {
+            win.statusBar()->showMessage(QStringLiteral("Open export B first"), 4000);
+            return;
+        }
+        qint64 outDur = 0;
+        const auto pieces = buildComparePieces(ra, rb, outDur);
+        QVector<qint64> seams;
+        for (const auto& p : pieces)
+            if (p.seamBefore)
+                seams.push_back(p.srcStartMs);
+        if (seams.isEmpty()) {
+            win.statusBar()->showMessage(QStringLiteral("No splice seams found"), 4000);
+            return;
+        }
+        seamCursor += direction;
+        if (seamCursor < 0)
+            seamCursor = seams.size() - 1;
+        if (seamCursor >= seams.size())
+            seamCursor = 0;
+        const qint64 srcMs = seams[seamCursor];
+        const qint64 radius = 5000;
+        const qint64 start = std::max<qint64>(0, srcMs - radius);
+        const qint64 end = std::max<qint64>(start + 1, std::min<qint64>(ra.durationMs, srcMs + radius));
+        structure->setView(start, end);
+        pics->setView(start, end);
+        compare->setView(start, end);
+        tabs->setCurrentWidget(compare);
+        win.statusBar()->showMessage(QString("Seam %1/%2 at %3 ms").arg(seamCursor + 1).arg(seams.size()).arg(srcMs), 4000);
+    };
+
     auto* fileMenu = win.menuBar()->addMenu("&File");
     auto* openAct = fileMenu->addAction("&Open TS...");
     openAct->setShortcut(QKeySequence::Open);
@@ -1468,6 +1502,10 @@ int main(int argc, char** argv)
 
     QObject::connect(fileMenu->addAction("Save &JSON Report..."), &QAction::triggered, &win, [&] { saveReport(false); });
     QObject::connect(fileMenu->addAction("Save &HTML Report..."), &QAction::triggered, &win, [&] { saveReport(true); });
+
+    auto* navMenu = win.menuBar()->addMenu("&Navigate");
+    QObject::connect(navMenu->addAction("Next &Seam"), &QAction::triggered, &win, [&] { jumpSeam(+1); });
+    QObject::connect(navMenu->addAction("Previous S&eam"), &QAction::triggered, &win, [&] { jumpSeam(-1); });
 
     win.resize(1180, 460);
     win.show();

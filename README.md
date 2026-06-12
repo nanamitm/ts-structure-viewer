@@ -99,6 +99,23 @@ $env:PATH="C:\Qt\6.11.1\msvc2022_64\bin;"+$env:PATH
 .\build-msvc\Release\ts-inspector.exe "path\to\file.ts"   # or File > Open
 ```
 
-### Still to do
-- **two-file diff** — feed `ts-inspector` / `CompareViewer` two real scans
-  (source vs export) to diff streams/PSI and overlay the timing across seams.
+## Two-file diff (`ts-diff`)
+Scans a **source (A)** and an **export (B)** and verifies the smart-render round
+trip:
+
+- **Streams diff** — a merged PID table (A vs B kind/codec) with status
+  (same / changed / dropped / added) plus a summary line: caption and audio
+  track counts preserved (OK / LOST / DROPPED) and B's PCR discontinuity (seam)
+  count. Answers "did the cut keep the ARIB captions and every audio track?"
+- **Timing** — A's and B's PTS/DTS/PCR graphs stacked; the export's seams show
+  up as discontinuity markers where the source is continuous.
+
+```powershell
+$env:PATH="C:\Qt\6.11.1\msvc2022_64\bin;"+$env:PATH
+.\build-msvc\Release\ts-diff.exe "source.ts" "export.ts"   # or File > Open A / B
+```
+
+Verified on a real round trip (ゆるゆり H.264 source + a 2-cut smart-render
+export): all three streams — video, audio and **ARIB caption (0x1305)** — diff
+as `same`, captions/audio reported OK, and B shows exactly one seam where the
+source timing is clean.

@@ -40,8 +40,17 @@ add_executable(ts-inspector
 )
 target_link_libraries(ts-inspector PRIVATE Qt6::Widgets)
 
+# Two-file diff: source (A) vs export (B) -- PSI diff + stacked timing.
+add_executable(ts-diff
+    src/diff_main.cpp
+    src/TsScan.h         src/TsScan.cpp
+    src/PtsGraphWidget.h src/PtsGraphWidget.cpp
+)
+target_link_libraries(ts-diff PRIVATE Qt6::Widgets)
+
 if (WIN32)
     set_target_properties(ts-structure-viewer PROPERTIES WIN32_EXECUTABLE ON)
     set_target_properties(ts-compare-viewer PROPERTIES WIN32_EXECUTABLE ON)
     set_target_properties(ts-inspector PROPERTIES WIN32_EXECUTABLE ON)
+    set_target_properties(ts-diff PROPERTIES WIN32_EXECUTABLE ON)
 endif()

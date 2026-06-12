@@ -443,12 +443,25 @@ void CompareViewer::paintEvent(QPaintEvent*)
     }
 
     p.setPen(QColor(170, 176, 186));
+    qint64 copyMs = 0;
+    qint64 reencodeMs = 0;
+    for (const OutPiece& pc : m_out) {
+        const qint64 dur = std::max<qint64>(0, pc.outEndMs - pc.outStartMs);
+        if (pc.kind == PieceKind::Copy)
+            copyMs += dur;
+        else
+            reencodeMs += dur;
+    }
+    const double copyPct = m_outDurationMs > 0 ? double(copyMs) * 100.0 / double(m_outDurationMs) : 0.0;
+    const double reencodePct = m_outDurationMs > 0 ? double(reencodeMs) * 100.0 / double(m_outDurationMs) : 0.0;
     const QString status =
-        QString("src %1 - %2   |   export %3 (from %4 source)   |   pieces %5")
+        QString("src %1 - %2   |   export %3 (from %4 source)   |   copy %5% / re-encode %6%   |   pieces %7")
             .arg(fmtTime(m_viewStartMs))
             .arg(fmtTime(m_viewEndMs))
             .arg(fmtTime(m_outDurationMs))
             .arg(fmtTime(m_src.durationMs))
+            .arg(copyPct, 0, 'f', 1)
+            .arg(reencodePct, 0, 'f', 1)
             .arg(m_out.size());
     p.drawText(kMargin, height() - 4, status);
 }

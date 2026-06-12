@@ -488,14 +488,29 @@ int main(int argc, char** argv)
         const int audA = audioCount(ra), audB = audioCount(rb);
         const auto seams = std::count_if(rb.pcr.begin(), rb.pcr.end(),
                                          [](const PcrPoint& p) { return p.discontinuity; });
+        qint64 outDur = 0;
+        qint64 copyMs = 0;
+        qint64 reencodeMs = 0;
+        for (const auto& p : buildComparePieces(ra, rb, outDur)) {
+            const qint64 dur = std::max<qint64>(0, p.outEndMs - p.outStartMs);
+            if (p.kind == CompareViewer::PieceKind::Copy)
+                copyMs += dur;
+            else
+                reencodeMs += dur;
+        }
+        const double copyPct = outDur > 0 ? double(copyMs) * 100.0 / double(outDur) : 0.0;
+        const double reencodePct = outDur > 0 ? double(reencodeMs) * 100.0 / double(outDur) : 0.0;
         summary->setText(
             QString("A %1 (%2 ms, %3 streams, RAP %4)   B %5 (%6 ms, %7 streams, RAP %8)\n"
-                    "captions A=%9 B=%10 %11   audio A=%12 B=%13 %14   B seams (PCR discontinuities): %15")
+                    "captions A=%9 B=%10 %11   audio A=%12 B=%13 %14   B seams (PCR discontinuities): %15   "
+                    "copy %16% (%17 ms)   re-encode %18% (%19 ms)")
                 .arg(QFileInfo(pathA).fileName()).arg(ra.durationMs).arg(ra.streams.size()).arg(ra.rapMs.size())
                 .arg(QFileInfo(pathB).fileName()).arg(rb.durationMs).arg(rb.streams.size()).arg(rb.rapMs.size())
                 .arg(capA).arg(capB).arg(capB >= capA && capA > 0 ? "OK" : (capA == 0 ? "-" : "LOST"))
                 .arg(audA).arg(audB).arg(audB == audA ? "OK" : (audB < audA ? "DROPPED" : "+"))
-                .arg(seams));
+                .arg(seams)
+                .arg(copyPct, 0, 'f', 1).arg(copyMs)
+                .arg(reencodePct, 0, 'f', 1).arg(reencodeMs));
     };
 
     auto buildProblems = [&] {

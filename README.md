@@ -19,11 +19,6 @@ Four small executables:
 | `ts-structure-viewer` | the viewport structure widget with a smart-render plan overlay (synthetic data) |
 | `ts-compare-viewer` | source-vs-export structure alignment (synthetic data) |
 
-![inspector — picture types](docs/inspector.png)
-![ts-diff — source vs export](docs/diff.png)
-![structure viewer](docs/structure.png)
-![compare viewer](docs/compare.png)
-
 Requires Qt 6 (Widgets) and CMake; tested with MSVC on Windows.
 
 ## Controls

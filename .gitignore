@@ -20,6 +20,3 @@ cmake_install.cmake
 *.png
 *.ts
 *.tsedit
-
-# ...but keep curated README screenshots
-!docs/*.png

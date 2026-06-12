@@ -1,37 +1,23 @@
 cmake_minimum_required(VERSION 3.21)
-project(ts-structure-viewer LANGUAGES CXX)
+project(ts-inspector LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
-# Standalone prototype for the TS structure viewer (viewport zoom/pan timeline).
 # Build:
 #   cmake -S . -B build-msvc -G "Visual Studio 17 2022" -A x64 \
 #         -DCMAKE_PREFIX_PATH=C:\Qt\6.11.1\msvc2022_64
 #   cmake --build build-msvc --config Release
-# Run (Qt bin on PATH):
-#   $env:PATH="C:\Qt\6.11.1\msvc2022_64\bin;"+$env:PATH
-#   .\build-msvc\Release\ts-structure-viewer.exe
+# The Qt runtime is deployed next to the .exe (windeployqt), so it runs
+# standalone:
+#   .\build-msvc\Release\ts-inspector.exe "path\to\file.ts"
 find_package(Qt6 REQUIRED COMPONENTS Widgets)
 
-add_executable(ts-structure-viewer
-    src/main.cpp
-    src/StructureViewer.h
-    src/StructureViewer.cpp
-)
-target_link_libraries(ts-structure-viewer PRIVATE Qt6::Widgets)
-
-add_executable(ts-compare-viewer
-    src/compare_main.cpp
-    src/CompareViewer.h
-    src/CompareViewer.cpp
-)
-target_link_libraries(ts-compare-viewer PRIVATE Qt6::Widgets)
-
-# Real-file inspector: scans an actual .ts (TsScan) and shows structure / PSI /
-# timing / picture types. Open a second file to switch into source-vs-export
-# compare mode (PSI diff + stacked timing). Reuses the StructureViewer widget.
+# Real-file TS inspector: scans an actual .ts (TsScan, on a background thread)
+# and shows its structure (GOP/RAP) / streams (PSI) / timing (PTS/DTS/PCR) /
+# picture types (I/P/B). Open a second file to switch into source-vs-export
+# compare mode (PSI diff + stacked timing).
 add_executable(ts-inspector
     src/inspector_main.cpp
     src/TsScan.h            src/TsScan.cpp
@@ -43,22 +29,15 @@ add_executable(ts-inspector
 target_link_libraries(ts-inspector PRIVATE Qt6::Widgets)
 
 if (WIN32)
-    set_target_properties(ts-structure-viewer PROPERTIES WIN32_EXECUTABLE ON)
-    set_target_properties(ts-compare-viewer PROPERTIES WIN32_EXECUTABLE ON)
     set_target_properties(ts-inspector PROPERTIES WIN32_EXECUTABLE ON)
 
-    # Deploy the Qt runtime DLLs + plugins next to each .exe (windeployqt) so the
-    # executables run standalone without Qt on PATH.
+    # Deploy the Qt runtime DLLs + plugins next to the .exe (windeployqt) so it
+    # runs standalone without Qt on PATH.
     find_program(WINDEPLOYQT_EXECUTABLE windeployqt HINTS "${Qt6_DIR}/../../../bin")
-    function(deploy_qt tgt)
-        if (WINDEPLOYQT_EXECUTABLE)
-            add_custom_command(TARGET ${tgt} POST_BUILD
-                COMMAND "${WINDEPLOYQT_EXECUTABLE}" --release --no-translations
-                        --no-system-d3d-compiler --no-opengl-sw "$<TARGET_FILE:${tgt}>"
-                COMMENT "Deploying Qt runtime for ${tgt}" VERBATIM)
-        endif()
-    endfunction()
-    deploy_qt(ts-structure-viewer)
-    deploy_qt(ts-compare-viewer)
-    deploy_qt(ts-inspector)
+    if (WINDEPLOYQT_EXECUTABLE)
+        add_custom_command(TARGET ts-inspector POST_BUILD
+            COMMAND "${WINDEPLOYQT_EXECUTABLE}" --release --no-translations
+                    --no-system-d3d-compiler --no-opengl-sw "$<TARGET_FILE:ts-inspector>"
+            COMMENT "Deploying Qt runtime for ts-inspector" VERBATIM)
+    endif()
 endif()

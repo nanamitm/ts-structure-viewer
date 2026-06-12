@@ -97,7 +97,10 @@ int main(int argc, char** argv)
 
     // Compare tab: source-vs-export structure alignment, added only in compare
     // mode (the recovered copy / re-encode / dropped plan over a shared source axis).
+    // Hide until it's added as a tab, else this not-yet-placed child paints its
+    // placeholder over the menu bar at (0,0).
     auto* compare = new CompareViewer(&win);
+    compare->hide();
 
     tabs->addTab(structure, "Structure");
     tabs->addTab(streamsPane, "Streams");

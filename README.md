@@ -44,6 +44,12 @@ second argument) to verify a smart-render round trip:
   — answers "did the cut keep the ARIB captions and every audio track?"
 - **Timing** stacks A's and B's graphs; the export's seams show up as
   discontinuity markers where the source is continuous.
+- a **Compare** tab appears: the source GOP structure with kept ranges lit and
+  dropped ranges dimmed, and the export drawn beneath the source time it came
+  from (copy green, re-encode windows orange, splice seams marked). The plan is
+  recovered with no EDL — `CompareMap` aligns the export's GOP-duration sequence
+  back onto the source (verbatim copies keep their RAP intervals). Boundary
+  (lead-in/tail) classification is heuristic; the copy/dropped alignment is solid.
 - **Structure** and **Pictures** keep showing A.
 
 Verified on a real round trip (a H.264 source + a 2-cut smart-render export from

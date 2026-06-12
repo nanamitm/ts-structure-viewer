@@ -32,6 +32,7 @@
 #include <QThread>
 #include <QVBoxLayout>
 #include <algorithm>
+#include <cstdlib>
 
 // Real-file TS structure viewer. Open one file (A) to inspect its structure (GOP/RAP),
 // elementary streams (PSI), PTS/DTS/PCR timing and per-frame picture types.
@@ -83,6 +84,13 @@ const TsStreamInfo* findSameTrackDifferentPid(const TsScanResult& r, const TsStr
 struct ExpectedRange {
     qint64 startMs = 0;
     qint64 endMs = 0;
+};
+
+struct Verdict {
+    QString status = "PASS";
+    QStringList pass;
+    QStringList warn;
+    QStringList fail;
 };
 
 qint64 expectedDurationMs(const QVector<ExpectedRange>& ranges)
@@ -194,6 +202,12 @@ QJsonArray reencodeDetailsJson(const TsScanResult& source, const QVector<Compare
     }
     return a;
 }
+
+Verdict buildVerdict(const TsScanResult& ra, const TsScanResult& rb, bool hasB,
+                     const QVector<ExpectedRange>& expected,
+                     const QVector<CompareViewer::OutPiece>& pieces);
+QJsonObject verdictJson(const Verdict& v);
+QString verdictText(const Verdict& v);
 
 bool parseExpectedRanges(const QString& path, QVector<ExpectedRange>& ranges, QString& error)
 {
@@ -402,6 +416,7 @@ QJsonObject reportJson(const TsScanResult& ra, const QString& pathA,
         cmp["pieces"] = pieceArray;
         cmp["reencodeDetails"] = reencodeDetailsJson(ra, pieces);
         cmp["expectedAlignment"] = expectedAlignmentJson(expectedAlignment(expected, pieces, rb.durationMs));
+        cmp["verdict"] = verdictJson(buildVerdict(ra, rb, true, expected, pieces));
         root["compare"] = cmp;
     }
     return root;
@@ -461,6 +476,8 @@ QString reportHtml(const TsScanResult& ra, const QString& pathA,
             h += QString("<p>expected alignment: start delta <b>%1 ms</b>, end delta <b>%2 ms</b>, duration delta <b>%3 ms</b></p>")
                      .arg(align.startDeltaMs).arg(align.endDeltaMs).arg(align.durationDeltaMs);
         }
+        h += QString("<h2>Verification</h2><pre>%1</pre>")
+                 .arg(htmlEsc(verdictText(buildVerdict(ra, rb, true, expected, pieces))));
         h += "<table><thead><tr><th>Kind</th><th>Source start</th><th>Source end</th><th>Output start</th><th>Output end</th><th>Seam before</th></tr></thead><tbody>";
         for (const auto& p : pieces) {
             h += QString("<tr><td>%1</td><td>%2</td><td>%3</td><td>%4</td><td>%5</td><td>%6</td></tr>")
@@ -515,6 +532,19 @@ struct Problem {
     qint64 byte = -1;
     QString detail;
 };
+
+void addVerdictWarn(Verdict& v, const QString& text)
+{
+    v.warn.push_back(text);
+    if (v.status == "PASS")
+        v.status = "WARN";
+}
+
+void addVerdictFail(Verdict& v, const QString& text)
+{
+    v.fail.push_back(text);
+    v.status = "FAIL";
+}
 
 template <typename Point, typename GetMs, typename GetByte>
 void addTimingProblems(QVector<Problem>& problems, const QVector<Point>& points,
@@ -585,6 +615,106 @@ QVector<Problem> collectProblems(const TsScanResult& ra, const QString& pathA,
         problems += b;
     }
     return problems;
+}
+
+Verdict buildVerdict(const TsScanResult& ra, const TsScanResult& rb, bool hasB,
+                     const QVector<ExpectedRange>& expected,
+                     const QVector<CompareViewer::OutPiece>& pieces)
+{
+    Verdict v;
+    if (!hasB) {
+        addVerdictWarn(v, "Open export B to run smart-render verification.");
+        return v;
+    }
+
+    const int capA = captionCount(ra);
+    const int capB = captionCount(rb);
+    if (capB < capA)
+        addVerdictFail(v, QString("caption streams dropped: A=%1 B=%2").arg(capA).arg(capB));
+    else
+        v.pass.push_back(QString("caption streams preserved: A=%1 B=%2").arg(capA).arg(capB));
+
+    const int audA = audioCount(ra);
+    const int audB = audioCount(rb);
+    if (audB < audA)
+        addVerdictFail(v, QString("audio streams dropped: A=%1 B=%2").arg(audA).arg(audB));
+    else if (audB > audA)
+        addVerdictWarn(v, QString("extra audio streams: A=%1 B=%2").arg(audA).arg(audB));
+    else
+        v.pass.push_back(QString("audio stream count preserved: %1").arg(audA));
+
+    const auto problems = collectProblems(ra, QStringLiteral("A"), rb, QStringLiteral("B"), true);
+    int bBackward = 0;
+    int bGaps = 0;
+    int bCc = 0;
+    for (const auto& p : problems) {
+        if (!p.fileLabel.startsWith("B:"))
+            continue;
+        if (p.type.contains("backward"))
+            ++bBackward;
+        else if (p.type.contains("gap"))
+            ++bGaps;
+        else if (p.type == "CC error")
+            ++bCc;
+    }
+    if (bBackward > 0)
+        addVerdictFail(v, QString("B has %1 timing backward jumps").arg(bBackward));
+    else
+        v.pass.push_back("B has no detected timing backward jumps.");
+    if (bGaps > 0)
+        addVerdictWarn(v, QString("B has %1 large timing gaps").arg(bGaps));
+    if (bCc > 0)
+        addVerdictWarn(v, QString("B has %1 continuity-counter errors").arg(bCc));
+
+    const auto seams = std::count_if(rb.pcr.begin(), rb.pcr.end(),
+                                     [](const PcrPoint& p) { return p.discontinuity; });
+    if (seams > 0)
+        addVerdictWarn(v, QString("B has %1 PCR discontinuity markers").arg(seams));
+    else
+        v.pass.push_back("B has no PCR discontinuity markers.");
+
+    const auto align = expectedAlignment(expected, pieces, rb.durationMs);
+    if (align.ok) {
+        const qint64 maxAbsDelta = std::max({ std::llabs(align.startDeltaMs),
+                                              std::llabs(align.endDeltaMs),
+                                              std::llabs(align.durationDeltaMs) });
+        if (maxAbsDelta > 80)
+            addVerdictFail(v, QString("expected cut alignment exceeds 80 ms: start %1 / end %2 / duration %3")
+                               .arg(align.startDeltaMs).arg(align.endDeltaMs).arg(align.durationDeltaMs));
+        else
+            v.pass.push_back(QString("expected cut alignment within 80 ms: start %1 / end %2 / duration %3")
+                                 .arg(align.startDeltaMs).arg(align.endDeltaMs).arg(align.durationDeltaMs));
+    }
+
+    if (v.pass.isEmpty() && v.warn.isEmpty() && v.fail.isEmpty())
+        v.pass.push_back("No verification checks were applicable.");
+    return v;
+}
+
+QJsonObject verdictJson(const Verdict& v)
+{
+    QJsonObject o;
+    o["status"] = v.status;
+    o["pass"] = QJsonArray::fromStringList(v.pass);
+    o["warn"] = QJsonArray::fromStringList(v.warn);
+    o["fail"] = QJsonArray::fromStringList(v.fail);
+    return o;
+}
+
+QString verdictText(const Verdict& v)
+{
+    QString text = QString("Overall: %1\n").arg(v.status);
+    auto append = [&](const QString& title, const QStringList& lines) {
+        if (lines.isEmpty())
+            return;
+        text += "\n" + title + "\n";
+        for (const auto& line : lines)
+            text += "  - " + line + "\n";
+    };
+    append("FAIL", v.fail);
+    append("WARN", v.warn);
+    append("PASS", v.pass);
+    return text.trimmed();
 }
 
 QString rangeDetailsText(const TsScanResult& r, qint64 startMs, qint64 endMs)
@@ -803,6 +933,14 @@ int main(int argc, char** argv)
     rangeSummary->setAlignment(Qt::AlignLeft | Qt::AlignTop);
     rangeLayout->addWidget(rangeSummary, 1);
 
+    auto* verificationPane = new QWidget(&win);
+    auto* verificationLayout = new QVBoxLayout(verificationPane);
+    auto* verificationSummary = new QLabel(QStringLiteral("Open source A and export B to verify smart rendering"), verificationPane);
+    verificationSummary->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    verificationSummary->setWordWrap(true);
+    verificationSummary->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+    verificationLayout->addWidget(verificationSummary, 1);
+
     // Compare tab: source-vs-export structure alignment, added only in compare
     // mode (the recovered copy / re-encode / dropped plan over a shared source axis).
     // Hide until it's added as a tab, else this not-yet-placed child paints its
@@ -814,6 +952,7 @@ int main(int argc, char** argv)
     tabs->addTab(streamsPane, "Streams");
     tabs->addTab(timingPane, "Timing");
     tabs->addTab(problemsPane, "Problems");
+    tabs->addTab(verificationPane, "Verification");
     tabs->addTab(rangePane, "Range Details");
     tabs->addTab(pics, "Pictures");
     win.setCentralWidget(tabs);
@@ -1007,6 +1146,7 @@ int main(int argc, char** argv)
         if (hasB) {
             qint64 outDur = 0;
             const auto pieces = buildComparePieces(ra, rb, outDur);
+            verificationSummary->setText(verdictText(buildVerdict(ra, rb, true, expectedRanges, pieces)));
             CompareViewer::Source src;
             src.label = QString("A: source - %1").arg(QFileInfo(pathA).fileName());
             src.durationMs = ra.durationMs;
@@ -1016,7 +1156,10 @@ int main(int argc, char** argv)
             if (compareIdx < 0)
                 tabs->addTab(compare, "Compare");
         } else if (compareIdx >= 0) {
+            verificationSummary->setText(QStringLiteral("Open source A and export B to verify smart rendering"));
             tabs->removeTab(compareIdx);
+        } else {
+            verificationSummary->setText(QStringLiteral("Open source A and export B to verify smart rendering"));
         }
 
         // Test hook: TSV_VIEW="startMs,endMs" opens the structure/picture views zoomed.

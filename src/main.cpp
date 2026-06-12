@@ -90,6 +90,57 @@ QJsonArray expectedRangesJson(const QVector<ExpectedRange>& ranges)
     return a;
 }
 
+struct ExpectedAlignment {
+    bool ok = false;
+    qint64 expectedStartMs = 0;
+    qint64 expectedEndMs = 0;
+    qint64 expectedDurationMs = 0;
+    qint64 actualStartMs = 0;
+    qint64 actualEndMs = 0;
+    qint64 actualDurationMs = 0;
+    qint64 startDeltaMs = 0;
+    qint64 endDeltaMs = 0;
+    qint64 durationDeltaMs = 0;
+};
+
+ExpectedAlignment expectedAlignment(const QVector<ExpectedRange>& expected,
+                                    const QVector<CompareViewer::OutPiece>& pieces,
+                                    qint64 actualDurationMs)
+{
+    ExpectedAlignment a;
+    if (expected.isEmpty() || pieces.isEmpty())
+        return a;
+    a.ok = true;
+    a.expectedStartMs = expected.first().startMs;
+    a.expectedEndMs = expected.last().endMs;
+    a.expectedDurationMs = expectedDurationMs(expected);
+    a.actualStartMs = pieces.first().srcStartMs;
+    a.actualEndMs = pieces.last().srcEndMs;
+    a.actualDurationMs = actualDurationMs;
+    a.startDeltaMs = a.actualStartMs - a.expectedStartMs;
+    a.endDeltaMs = a.actualEndMs - a.expectedEndMs;
+    a.durationDeltaMs = a.actualDurationMs - a.expectedDurationMs;
+    return a;
+}
+
+QJsonObject expectedAlignmentJson(const ExpectedAlignment& a)
+{
+    QJsonObject o;
+    o["available"] = a.ok;
+    if (!a.ok)
+        return o;
+    o["expectedStartMs"] = QString::number(a.expectedStartMs);
+    o["expectedEndMs"] = QString::number(a.expectedEndMs);
+    o["expectedDurationMs"] = QString::number(a.expectedDurationMs);
+    o["actualStartMs"] = QString::number(a.actualStartMs);
+    o["actualEndMs"] = QString::number(a.actualEndMs);
+    o["actualDurationMs"] = QString::number(a.actualDurationMs);
+    o["startDeltaMs"] = QString::number(a.startDeltaMs);
+    o["endDeltaMs"] = QString::number(a.endDeltaMs);
+    o["durationDeltaMs"] = QString::number(a.durationDeltaMs);
+    return o;
+}
+
 bool parseExpectedRanges(const QString& path, QVector<ExpectedRange>& ranges, QString& error)
 {
     QFile f(path);
@@ -295,6 +346,7 @@ QJsonObject reportJson(const TsScanResult& ra, const QString& pathA,
         cmp["copyPercent"] = outDur > 0 ? double(copyMs) * 100.0 / double(outDur) : 0.0;
         cmp["reencodePercent"] = outDur > 0 ? double(reencodeMs) * 100.0 / double(outDur) : 0.0;
         cmp["pieces"] = pieceArray;
+        cmp["expectedAlignment"] = expectedAlignmentJson(expectedAlignment(expected, pieces, rb.durationMs));
         root["compare"] = cmp;
     }
     return root;
@@ -349,6 +401,11 @@ QString reportHtml(const TsScanResult& ra, const QString& pathA,
         h += QString("<h2>Compare Summary</h2><p>captions: <b>%1</b> / audio: <b>%2</b> / copied: <b>%3 ms (%4%)</b> / re-encoded: <b>%5 ms</b></p>")
                  .arg(htmlEsc(capStatus), htmlEsc(audStatus))
                  .arg(copyMs).arg(copyPct, 0, 'f', 1).arg(reencodeMs);
+        const auto align = expectedAlignment(expected, pieces, rb.durationMs);
+        if (align.ok) {
+            h += QString("<p>expected alignment: start delta <b>%1 ms</b>, end delta <b>%2 ms</b>, duration delta <b>%3 ms</b></p>")
+                     .arg(align.startDeltaMs).arg(align.endDeltaMs).arg(align.durationDeltaMs);
+        }
         h += "<table><thead><tr><th>Kind</th><th>Source start</th><th>Source end</th><th>Output start</th><th>Output end</th><th>Seam before</th></tr></thead><tbody>";
         for (const auto& p : pieces) {
             h += QString("<tr><td>%1</td><td>%2</td><td>%3</td><td>%4</td><td>%5</td><td>%6</td></tr>")
@@ -770,7 +827,8 @@ int main(int argc, char** argv)
         qint64 outDur = 0;
         qint64 copyMs = 0;
         qint64 reencodeMs = 0;
-        for (const auto& p : buildComparePieces(ra, rb, outDur)) {
+        const auto pieces = buildComparePieces(ra, rb, outDur);
+        for (const auto& p : pieces) {
             const qint64 dur = std::max<qint64>(0, p.outEndMs - p.outStartMs);
             if (p.kind == CompareViewer::PieceKind::Copy)
                 copyMs += dur;
@@ -785,10 +843,15 @@ int main(int argc, char** argv)
                   .arg(expectedRanges.size())
                   .arg(expectedDurationMs(expectedRanges))
                   .arg(rb.durationMs - expectedDurationMs(expectedRanges));
+        const auto align = expectedAlignment(expectedRanges, pieces, rb.durationMs);
+        const QString alignText = align.ok
+            ? QString("   in/out delta: start %1 ms / end %2 ms / duration %3 ms")
+                  .arg(align.startDeltaMs).arg(align.endDeltaMs).arg(align.durationDeltaMs)
+            : QString();
         summary->setText(
             QString("A %1 (%2 ms, %3 streams, RAP %4)   B %5 (%6 ms, %7 streams, RAP %8)\n"
                     "captions A=%9 B=%10 %11   audio A=%12 B=%13 %14   B seams (PCR discontinuities): %15   "
-                    "copy %16% (%17 ms)   re-encode %18% (%19 ms)%20")
+                    "copy %16% (%17 ms)   re-encode %18% (%19 ms)%20%21")
                 .arg(QFileInfo(pathA).fileName()).arg(ra.durationMs).arg(ra.streams.size()).arg(ra.rapMs.size())
                 .arg(QFileInfo(pathB).fileName()).arg(rb.durationMs).arg(rb.streams.size()).arg(rb.rapMs.size())
                 .arg(capA).arg(capB).arg(capB >= capA && capA > 0 ? "OK" : (capA == 0 ? "-" : "LOST"))
@@ -796,7 +859,8 @@ int main(int argc, char** argv)
                 .arg(seams)
                 .arg(copyPct, 0, 'f', 1).arg(copyMs)
                 .arg(reencodePct, 0, 'f', 1).arg(reencodeMs)
-                .arg(expectedText));
+                .arg(expectedText)
+                .arg(alignText));
     };
 
     auto buildProblems = [&] {

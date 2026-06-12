@@ -498,8 +498,10 @@ QJsonObject reportJson(const TsScanResult& ra, const QString& pathA,
         cmp["copyByteSamples"] = copyByteSampleJson(pathA, pathB, ra, rb, pieces);
         cmp["audioCaptionTiming"] = audioCaptionTimingJson(ra, rb);
         cmp["expectedAlignment"] = expectedAlignmentJson(expectedAlignment(expected, pieces, rb.durationMs));
-        cmp["verdict"] = verdictJson(buildVerdict(ra, rb, true, expected, pieces));
+        const auto verdict = buildVerdict(ra, rb, true, expected, pieces);
+        cmp["verdict"] = verdictJson(verdict);
         root["compare"] = cmp;
+        root["verdict"] = verdictJson(verdict);
     }
     return root;
 }
@@ -943,16 +945,19 @@ int main(int argc, char** argv)
         QTextStream err(stderr);
         QTextStream out(stdout);
         if (args.size() < 4) {
-            err << "usage: ts-structure-viewer --check source.ts export.ts [--json report.json] [--html report.html]\n";
+            err << "usage: ts-structure-viewer --check source.ts export.ts [--cuts expected.json] [--json report.json] [--html report.html]\n";
             return 2;
         }
         QString jsonPath;
         QString htmlPath;
+        QString cutsPath;
         for (int i = 4; i < args.size(); ++i) {
             if (args[i] == "--json" && i + 1 < args.size()) {
                 jsonPath = args[++i];
             } else if (args[i] == "--html" && i + 1 < args.size()) {
                 htmlPath = args[++i];
+            } else if (args[i] == "--cuts" && i + 1 < args.size()) {
+                cutsPath = args[++i];
             } else {
                 err << "unknown or incomplete option: " << args[i] << "\n";
                 return 2;
@@ -972,19 +977,29 @@ int main(int argc, char** argv)
             return 1;
         }
 
+        QVector<ExpectedRange> expected;
+        if (!cutsPath.isEmpty()) {
+            QString cutsError;
+            if (!parseExpectedRanges(cutsPath, expected, cutsError)) {
+                err << "expected cuts load failed: " << cutsError << "\n";
+                return 1;
+            }
+        }
+
         QString error;
-        const QJsonDocument json(reportJson(ra, pathA, rb, pathB, true));
+        const QJsonDocument json(reportJson(ra, pathA, rb, pathB, true, expected, cutsPath));
         if (!jsonPath.isEmpty() && !saveTextFile(jsonPath, json.toJson(QJsonDocument::Indented), error)) {
             err << "json save failed: " << error << "\n";
             return 1;
         }
-        if (!htmlPath.isEmpty() && !saveTextFile(htmlPath, reportHtml(ra, pathA, rb, pathB, true).toUtf8(), error)) {
+        if (!htmlPath.isEmpty() && !saveTextFile(htmlPath, reportHtml(ra, pathA, rb, pathB, true, expected, cutsPath).toUtf8(), error)) {
             err << "html save failed: " << error << "\n";
             return 1;
         }
         if (jsonPath.isEmpty() && htmlPath.isEmpty())
             out << json.toJson(QJsonDocument::Indented);
-        return 0;
+        const QString status = json.object().value("verdict").toObject().value("status").toString();
+        return status == "FAIL" ? 1 : 0;
     }
 
     QMainWindow win;

@@ -79,7 +79,12 @@ automated checks:
 ```powershell
 .\build-msvc\Release\ts-structure-viewer-cli.exe --check "source.ts" "export.ts" --json report.json
 .\build-msvc\Release\ts-structure-viewer-cli.exe --check "source.ts" "export.ts" --html report.html
+.\build-msvc\Release\ts-structure-viewer-cli.exe --check "source.ts" "export.ts" --cuts cuts.json --json report.json
 ```
+
+`--cuts` accepts JSON (`{"ranges":[{"startMs":1000,"endMs":5000}]}` or an array)
+or CSV/TXT (`startMs,endMs`). The CLI exits with code 1 when the verification
+verdict is `FAIL`.
 
 ## History
 This repo started as a sandbox of synthetic-data viewers for prototyping the

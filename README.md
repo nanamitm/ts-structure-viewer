@@ -1,16 +1,30 @@
-# ts-structure-viewer (prototype)
+# ts-structure-viewer
 
-A standalone Qt6/C++ prototype of the **TS structure viewer** for
-[`ts-edit-gui`](../ts-edit-gui). It is a read-only, viewport-based (zoom/pan)
-timeline for verifying smart-rendering exports: it overlays the GOP/RAP
-structure with the exporter's plan so you can see, at a glance, which regions
-are passed through verbatim (copy) and which are partial-GOP re-encode windows.
+Qt6/C++ viewers for inspecting **MPEG-2 TS** structure and verifying
+**smart-rendering** (frame-accurate, mostly-lossless cut) exports. Companion to
+the editor [`ts-edit-gui`](https://github.com/nanamitm/ts-edit-gui): when a cut
+copies whole GOPs verbatim and only re-encodes the boundary GOPs, these tools
+let you *see* what was copied, re-encoded, dropped or preserved.
 
-This is a sandbox: the widget is driven by **synthetic data** (`main.cpp`) so it
-builds and runs with nothing but Qt. Once the interaction model is settled, the
-`StructureViewer` widget is meant to be lifted into `ts-edit-gui` and fed real
-data from `TsSourceIndex` (RAP times) and `TsSmartExporter::planSegments`
-(copy / lead-in / tail windows).
+Everything is built on a dependency-free (Qt-only) raw 188-byte TS parser
+(`TsScan`) — no libav/ffmpeg — because a structure/verification tool wants the
+packet-level PCR, CC, RAI and discontinuity flags a demuxer hides.
+
+Four small executables:
+
+| exe | what |
+|-----|------|
+| **`ts-inspector`** | open a real `.ts` → Structure (GOP/RAP), Streams (PSI), Timing (PTS/DTS/PCR), Pictures (I/P/B) |
+| **`ts-diff`** | diff a source vs its export → did captions/audio survive? where are the seams? |
+| `ts-structure-viewer` | the viewport structure widget with a smart-render plan overlay (synthetic data) |
+| `ts-compare-viewer` | source-vs-export structure alignment (synthetic data) |
+
+![inspector — picture types](docs/inspector.png)
+![ts-diff — source vs export](docs/diff.png)
+![structure viewer](docs/structure.png)
+![compare viewer](docs/compare.png)
+
+Requires Qt 6 (Widgets) and CMake; tested with MSVC on Windows.
 
 ## Controls
 - **wheel** — zoom in/out, centered on the cursor
@@ -44,12 +58,13 @@ $env:TSV_VIEW="59500,62500"; .\build-msvc\Release\ts-structure-viewer.exe
 ```
 
 ## Status
-The `StructureViewer` widget has been **ported into `ts-edit-gui`** as a
-read-only "Structure" tab (commit `5d64467`), fed by the real RAP scan and the
-exporter's plan via `TsSmartExporter::planSegments`. The canonical copy now
-lives in `ts-edit-gui/src/ui/StructureViewer.*`; the copy here is the sandbox
-where new ideas are prototyped against synthetic data before porting back.
-Keep the two in sync deliberately (the integrated one is canonical).
+`StructureViewer` was briefly integrated into `ts-edit-gui` as a "Structure"
+tab and then reverted — the structure/verification tooling lives **here** as its
+own project instead, so `ts-edit-gui` stays focused on editing. This repo is the
+canonical home; if `ts-edit-gui` ever needs an embedded structure view again,
+the widget can be ported back. The two synthetic-data viewers
+(`ts-structure-viewer`, `ts-compare-viewer`) double as a sandbox for trying
+rendering/interaction ideas before wiring them onto real `TsScan` data.
 
 ## Two-file comparison viewer (`ts-compare-viewer`)
 `CompareViewer` aligns a **source** and its **smart-render export** on one shared
@@ -119,3 +134,7 @@ Verified on a real round trip (ゆるゆり H.264 source + a 2-cut smart-render
 export): all three streams — video, audio and **ARIB caption (0x1305)** — diff
 as `same`, captions/audio reported OK, and B shows exactly one seam where the
 source timing is clean.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

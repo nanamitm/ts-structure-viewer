@@ -13,6 +13,7 @@
 //
 //   * wheel        : zoom in/out centered on the cursor
 //   * left-drag    : pan the visible range
+//   * shift-drag   : select a time range (emits rangeSelected)
 //   * left-click   : seek (emits seekRequested)
 //   * double-click : fit the whole duration
 //   * click minimap: recenter the view there
@@ -45,6 +46,7 @@ public:
 
 signals:
     void seekRequested(qint64 relMs);
+    void rangeSelected(qint64 startMs, qint64 endMs);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -71,6 +73,7 @@ private:
     void drawGops(QPainter& p, const QRect& lane);
     void drawPlan(QPainter& p, const QRect& lane);
     void drawMinimap(QPainter& p);
+    void drawSelection(QPainter& p, const QRect& lane);
 
     qint64 m_durationMs = 0;
     QVector<qint64> m_rapTimesMs;
@@ -79,6 +82,11 @@ private:
 
     qint64 m_viewStartMs = 0;
     qint64 m_viewEndMs = 0;
+
+    bool m_selecting = false;
+    bool m_hasSelection = false;
+    qint64 m_selectionStartMs = 0;
+    qint64 m_selectionEndMs = 0;
 
     bool m_dragging = false;
     bool m_dragMoved = false;

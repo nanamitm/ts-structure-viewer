@@ -179,6 +179,14 @@ void StructureViewer::mousePressEvent(QMouseEvent* event)
 {
     if (event->button() != Qt::LeftButton)
         return;
+    if ((event->modifiers() & Qt::ShiftModifier) && laneRect().contains(event->pos())) {
+        m_selecting = true;
+        m_hasSelection = true;
+        m_selectionStartMs = std::clamp<qint64>(timeForX(event->pos().x()), 0, m_durationMs);
+        m_selectionEndMs = m_selectionStartMs;
+        update();
+        return;
+    }
     if (minimapRect().contains(event->pos())) {
         // Recenter the view on the clicked minimap position.
         const qint64 dur = std::max<qint64>(1, m_durationMs);
@@ -200,6 +208,11 @@ void StructureViewer::mousePressEvent(QMouseEvent* event)
 
 void StructureViewer::mouseMoveEvent(QMouseEvent* event)
 {
+    if (m_selecting) {
+        m_selectionEndMs = std::clamp<qint64>(timeForX(event->pos().x()), 0, m_durationMs);
+        update();
+        return;
+    }
     if (!m_dragging)
         return;
     const int dx = event->pos().x() - m_pressPos.x();
@@ -215,6 +228,19 @@ void StructureViewer::mouseMoveEvent(QMouseEvent* event)
 
 void StructureViewer::mouseReleaseEvent(QMouseEvent* event)
 {
+    if (m_selecting) {
+        m_selecting = false;
+        m_selectionEndMs = std::clamp<qint64>(timeForX(event->pos().x()), 0, m_durationMs);
+        qint64 a = std::min(m_selectionStartMs, m_selectionEndMs);
+        qint64 b = std::max(m_selectionStartMs, m_selectionEndMs);
+        if (b - a < 1)
+            b = std::min<qint64>(m_durationMs, a + 1);
+        m_selectionStartMs = a;
+        m_selectionEndMs = b;
+        emit rangeSelected(a, b);
+        update();
+        return;
+    }
     if (!m_dragging)
         return;
     m_dragging = false;
@@ -359,6 +385,23 @@ void StructureViewer::drawMinimap(QPainter& p)
     p.drawRect(QRect(vx0, mm.top() + 1, std::max(2, vx1 - vx0), mm.height() - 2));
 }
 
+void StructureViewer::drawSelection(QPainter& p, const QRect& lane)
+{
+    if (!m_hasSelection)
+        return;
+    const qint64 a = std::min(m_selectionStartMs, m_selectionEndMs);
+    const qint64 b = std::max(m_selectionStartMs, m_selectionEndMs);
+    if (b <= m_viewStartMs || a >= m_viewEndMs)
+        return;
+    const int xa = std::max(lane.left(), xForTime(a));
+    const int xb = std::min(lane.right(), xForTime(b));
+    if (xb <= xa)
+        return;
+    p.setPen(QPen(QColor(150, 190, 255), 1));
+    p.setBrush(QColor(90, 145, 255, 65));
+    p.drawRect(QRect(xa, lane.top(), xb - xa, lane.height()));
+}
+
 void StructureViewer::paintEvent(QPaintEvent*)
 {
     QPainter p(this);
@@ -380,6 +423,7 @@ void StructureViewer::paintEvent(QPaintEvent*)
     p.drawRoundedRect(lane, 4, 4);
     drawGops(p, lane);
     drawPlan(p, lane);
+    drawSelection(p, lane);
 
     // Playhead.
     if (m_playheadMs >= m_viewStartMs && m_playheadMs <= m_viewEndMs) {

@@ -342,6 +342,64 @@ QVector<Problem> collectProblems(const TsScanResult& ra, const QString& pathA,
     }
     return problems;
 }
+
+QString rangeDetailsText(const TsScanResult& r, qint64 startMs, qint64 endMs)
+{
+    auto inRange = [startMs, endMs](qint64 t) { return t >= startMs && t < endMs; };
+    int rap = 0;
+    for (qint64 t : r.rapMs)
+        if (inRange(t))
+            ++rap;
+
+    int nI = 0, nP = 0, nB = 0, nU = 0;
+    for (const auto& f : r.frames) {
+        if (!inRange(f.ptsMs))
+            continue;
+        if (f.type == 'I')
+            ++nI;
+        else if (f.type == 'P')
+            ++nP;
+        else if (f.type == 'B')
+            ++nB;
+        else
+            ++nU;
+    }
+
+    int videoPts = 0;
+    for (const auto& p : r.videoPts)
+        if (inRange(p.ptsMs))
+            ++videoPts;
+    int audioPts = 0;
+    for (const auto& p : r.audioPts)
+        if (inRange(p.ptsMs))
+            ++audioPts;
+    int pcr = 0;
+    int pcrDisc = 0;
+    for (const auto& p : r.pcr) {
+        if (!inRange(p.pcrMs))
+            continue;
+        ++pcr;
+        if (p.discontinuity)
+            ++pcrDisc;
+    }
+
+    int timedProblems = 0;
+    for (const auto& p : collectProblemsOne(r, "A"))
+        if (p.timeMs >= 0 && inRange(p.timeMs))
+            ++timedProblems;
+
+    return QString("Range %1 - %2 ms (%3 ms)\n"
+                   "RAP: %4\n"
+                   "Frames: %5  I=%6 P=%7 B=%8 unknown=%9\n"
+                   "Video PTS points: %10\n"
+                   "Audio PTS points: %11\n"
+                   "PCR samples: %12  discontinuities=%13\n"
+                   "Timed problems in range: %14")
+        .arg(startMs).arg(endMs).arg(endMs - startMs)
+        .arg(rap)
+        .arg(nI + nP + nB + nU).arg(nI).arg(nP).arg(nB).arg(nU)
+        .arg(videoPts).arg(audioPts).arg(pcr).arg(pcrDisc).arg(timedProblems);
+}
 } // namespace
 
 int main(int argc, char** argv)
@@ -399,6 +457,14 @@ int main(int argc, char** argv)
     problemsLayout->addWidget(problemsSummary);
     problemsLayout->addWidget(problemsTable, 1);
 
+    auto* rangePane = new QWidget(&win);
+    auto* rangeLayout = new QVBoxLayout(rangePane);
+    auto* rangeSummary = new QLabel(QStringLiteral("Shift-drag a range in the Structure tab"), rangePane);
+    rangeSummary->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    rangeSummary->setWordWrap(true);
+    rangeSummary->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+    rangeLayout->addWidget(rangeSummary, 1);
+
     // Compare tab: source-vs-export structure alignment, added only in compare
     // mode (the recovered copy / re-encode / dropped plan over a shared source axis).
     // Hide until it's added as a tab, else this not-yet-placed child paints its
@@ -410,6 +476,7 @@ int main(int argc, char** argv)
     tabs->addTab(streamsPane, "Streams");
     tabs->addTab(timingPane, "Timing");
     tabs->addTab(problemsPane, "Problems");
+    tabs->addTab(rangePane, "Range Details");
     tabs->addTab(pics, "Pictures");
     win.setCentralWidget(tabs);
 
@@ -641,6 +708,7 @@ int main(int argc, char** argv)
         pathA = path;
         rb = TsScanResult{};   // a new source clears the comparison
         hasB = false;
+        rangeSummary->setText(QStringLiteral("Shift-drag a range in the Structure tab"));
         refresh();
     };
     auto openB = [&](const QString& path) {
@@ -688,6 +756,13 @@ int main(int argc, char** argv)
             compare->setView(start, end);
         tabs->setCurrentWidget(mappedFromB && hasB ? static_cast<QWidget*>(compare) : static_cast<QWidget*>(structure));
         win.statusBar()->showMessage(QString("Jumped to %1 ms").arg(srcMs), 4000);
+    });
+
+    QObject::connect(structure, &StructureViewer::rangeSelected, &win, [&](qint64 startMs, qint64 endMs) {
+        if (!ra.ok)
+            return;
+        rangeSummary->setText(rangeDetailsText(ra, startMs, endMs));
+        tabs->setCurrentWidget(rangePane);
     });
 
     auto* fileMenu = win.menuBar()->addMenu("&File");

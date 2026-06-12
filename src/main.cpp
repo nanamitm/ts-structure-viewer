@@ -11,10 +11,15 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QHeaderView>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QLabel>
 #include <QMainWindow>
 #include <QMenuBar>
+#include <QMessageBox>
 #include <QProgressDialog>
+#include <QSaveFile>
 #include <QSet>
 #include <QStatusBar>
 #include <QTabWidget>
@@ -52,6 +57,200 @@ const TsStreamInfo* find(const TsScanResult& r, int pid)
         if (s.pid == pid)
             return &s;
     return nullptr;
+}
+
+QJsonArray streamsJson(const TsScanResult& r)
+{
+    QJsonArray a;
+    for (const auto& s : r.streams) {
+        QJsonObject o;
+        o["pid"] = s.pid;
+        o["pidHex"] = QString("0x%1").arg(s.pid, 4, 16, QChar('0'));
+        o["streamType"] = s.streamType;
+        o["streamTypeHex"] = QString("0x%1").arg(s.streamType, 2, 16, QChar('0'));
+        o["kind"] = s.kind;
+        o["codec"] = s.codec;
+        o["language"] = s.language;
+        o["pcr"] = s.isPcr;
+        o["ccErrors"] = r.ccErrors.value(s.pid);
+        a.push_back(o);
+    }
+    return a;
+}
+
+QJsonObject scanJson(const TsScanResult& r, const QString& path)
+{
+    qint64 ccTotal = 0;
+    for (int v : r.ccErrors)
+        ccTotal += v;
+
+    QJsonArray pcrDiscontinuities;
+    for (const auto& p : r.pcr) {
+        if (!p.discontinuity)
+            continue;
+        QJsonObject o;
+        o["byte"] = QString::number(p.byte);
+        o["pcrMs"] = QString::number(p.pcrMs);
+        pcrDiscontinuities.push_back(o);
+    }
+
+    QJsonObject o;
+    o["path"] = path;
+    o["fileName"] = QFileInfo(path).fileName();
+    o["fileSize"] = QString::number(r.fileSize);
+    o["programNumber"] = r.programNumber;
+    o["pmtPid"] = r.pmtPid;
+    o["pmtPidHex"] = QString("0x%1").arg(r.pmtPid, 4, 16, QChar('0'));
+    o["pcrPid"] = r.pcrPid;
+    o["pcrPidHex"] = QString("0x%1").arg(r.pcrPid, 4, 16, QChar('0'));
+    o["videoPid"] = r.videoPid;
+    o["videoPidHex"] = QString("0x%1").arg(r.videoPid, 4, 16, QChar('0'));
+    o["audioPid"] = r.audioPid;
+    o["durationMs"] = QString::number(r.durationMs);
+    o["rapCount"] = r.rapMs.size();
+    o["frameCount"] = r.frames.size();
+    o["videoCodec"] = r.videoCodec;
+    o["streamCount"] = r.streams.size();
+    o["captionCount"] = captionCount(r);
+    o["audioCount"] = audioCount(r);
+    o["ccErrorTotal"] = QString::number(ccTotal);
+    o["pcrDiscontinuityCount"] = pcrDiscontinuities.size();
+    o["pcrDiscontinuities"] = pcrDiscontinuities;
+    o["streams"] = streamsJson(r);
+    return o;
+}
+
+QString htmlEsc(QString s)
+{
+    return s.toHtmlEscaped();
+}
+
+QString htmlScanTable(const TsScanResult& r)
+{
+    QString h = "<table><thead><tr><th>PID</th><th>Kind</th><th>Codec</th><th>Lang</th><th>PCR</th><th>CC errors</th></tr></thead><tbody>";
+    for (const auto& s : r.streams) {
+        h += QString("<tr><td>0x%1</td><td>%2</td><td>%3</td><td>%4</td><td>%5</td><td>%6</td></tr>")
+                 .arg(s.pid, 4, 16, QChar('0'))
+                 .arg(htmlEsc(s.kind), htmlEsc(s.codec), htmlEsc(s.language), s.isPcr ? "yes" : "")
+                 .arg(r.ccErrors.value(s.pid));
+    }
+    h += "</tbody></table>";
+    return h;
+}
+
+QJsonObject reportJson(const TsScanResult& ra, const QString& pathA,
+                       const TsScanResult& rb, const QString& pathB, bool hasB)
+{
+    QJsonObject root;
+    root["tool"] = "ts-structure-viewer";
+    root["formatVersion"] = 1;
+    root["mode"] = hasB ? "compare" : "single";
+    root["source"] = scanJson(ra, pathA);
+
+    if (hasB) {
+        qint64 outDur = 0;
+        const auto pieces = buildComparePieces(ra, rb, outDur);
+        qint64 copyMs = 0;
+        qint64 reencodeMs = 0;
+        QJsonArray pieceArray;
+        for (const auto& p : pieces) {
+            const qint64 dur = std::max<qint64>(0, p.outEndMs - p.outStartMs);
+            if (p.kind == CompareViewer::PieceKind::Copy)
+                copyMs += dur;
+            else
+                reencodeMs += dur;
+
+            QJsonObject o;
+            o["kind"] = p.kind == CompareViewer::PieceKind::Copy ? "copy" : "reencode";
+            o["srcStartMs"] = QString::number(p.srcStartMs);
+            o["srcEndMs"] = QString::number(p.srcEndMs);
+            o["outStartMs"] = QString::number(p.outStartMs);
+            o["outEndMs"] = QString::number(p.outEndMs);
+            o["seamBefore"] = p.seamBefore;
+            pieceArray.push_back(o);
+        }
+
+        QJsonObject cmp;
+        cmp["export"] = scanJson(rb, pathB);
+        cmp["captionStatus"] = captionCount(rb) >= captionCount(ra) && captionCount(ra) > 0 ? "OK" : (captionCount(ra) == 0 ? "-" : "LOST");
+        cmp["audioStatus"] = audioCount(rb) == audioCount(ra) ? "OK" : (audioCount(rb) < audioCount(ra) ? "DROPPED" : "+");
+        cmp["outputDurationMs"] = QString::number(outDur);
+        cmp["copyMs"] = QString::number(copyMs);
+        cmp["reencodeMs"] = QString::number(reencodeMs);
+        cmp["copyPercent"] = outDur > 0 ? double(copyMs) * 100.0 / double(outDur) : 0.0;
+        cmp["reencodePercent"] = outDur > 0 ? double(reencodeMs) * 100.0 / double(outDur) : 0.0;
+        cmp["pieces"] = pieceArray;
+        root["compare"] = cmp;
+    }
+    return root;
+}
+
+QString reportHtml(const TsScanResult& ra, const QString& pathA,
+                   const TsScanResult& rb, const QString& pathB, bool hasB)
+{
+    QString h = "<!doctype html><meta charset=\"utf-8\"><title>TS Structure Report</title>"
+                "<style>body{font:14px/1.45 Segoe UI,Arial,sans-serif;margin:24px;color:#202124}"
+                "h1,h2{margin:.6em 0 .3em}table{border-collapse:collapse;margin:12px 0 20px;width:100%}"
+                "th,td{border:1px solid #d0d7de;padding:6px 8px;text-align:left}th{background:#f6f8fa}"
+                ".ok{color:#147d3f}.warn{color:#9a6700}.bad{color:#b42318}</style>";
+    h += "<h1>TS Structure Report</h1>";
+    h += QString("<p><b>Mode:</b> %1</p>").arg(hasB ? "compare" : "single");
+    h += QString("<h2>Source</h2><p><b>%1</b><br>duration %2 ms / RAP %3 / streams %4 / captions %5 / audio %6</p>")
+             .arg(htmlEsc(pathA)).arg(ra.durationMs).arg(ra.rapMs.size()).arg(ra.streams.size())
+             .arg(captionCount(ra)).arg(audioCount(ra));
+    h += htmlScanTable(ra);
+
+    if (hasB) {
+        qint64 outDur = 0;
+        const auto pieces = buildComparePieces(ra, rb, outDur);
+        qint64 copyMs = 0;
+        qint64 reencodeMs = 0;
+        for (const auto& p : pieces) {
+            const qint64 dur = std::max<qint64>(0, p.outEndMs - p.outStartMs);
+            if (p.kind == CompareViewer::PieceKind::Copy)
+                copyMs += dur;
+            else
+                reencodeMs += dur;
+        }
+        const QString capStatus = captionCount(rb) >= captionCount(ra) && captionCount(ra) > 0 ? "OK" : (captionCount(ra) == 0 ? "-" : "LOST");
+        const QString audStatus = audioCount(rb) == audioCount(ra) ? "OK" : (audioCount(rb) < audioCount(ra) ? "DROPPED" : "+");
+        const double copyPct = outDur > 0 ? double(copyMs) * 100.0 / double(outDur) : 0.0;
+
+        h += QString("<h2>Export</h2><p><b>%1</b><br>duration %2 ms / RAP %3 / streams %4 / captions %5 / audio %6</p>")
+                 .arg(htmlEsc(pathB)).arg(rb.durationMs).arg(rb.rapMs.size()).arg(rb.streams.size())
+                 .arg(captionCount(rb)).arg(audioCount(rb));
+        h += htmlScanTable(rb);
+        h += QString("<h2>Compare Summary</h2><p>captions: <b>%1</b> / audio: <b>%2</b> / copied: <b>%3 ms (%4%)</b> / re-encoded: <b>%5 ms</b></p>")
+                 .arg(htmlEsc(capStatus), htmlEsc(audStatus))
+                 .arg(copyMs).arg(copyPct, 0, 'f', 1).arg(reencodeMs);
+        h += "<table><thead><tr><th>Kind</th><th>Source start</th><th>Source end</th><th>Output start</th><th>Output end</th><th>Seam before</th></tr></thead><tbody>";
+        for (const auto& p : pieces) {
+            h += QString("<tr><td>%1</td><td>%2</td><td>%3</td><td>%4</td><td>%5</td><td>%6</td></tr>")
+                     .arg(p.kind == CompareViewer::PieceKind::Copy ? "copy" : "reencode")
+                     .arg(p.srcStartMs).arg(p.srcEndMs).arg(p.outStartMs).arg(p.outEndMs)
+                     .arg(p.seamBefore ? "yes" : "");
+        }
+        h += "</tbody></table>";
+    }
+    return h;
+}
+
+bool saveTextFile(const QString& path, const QByteArray& bytes, QString& error)
+{
+    QSaveFile f(path);
+    if (!f.open(QIODevice::WriteOnly)) {
+        error = f.errorString();
+        return false;
+    }
+    if (f.write(bytes) != bytes.size()) {
+        error = f.errorString();
+        return false;
+    }
+    if (!f.commit()) {
+        error = f.errorString();
+        return false;
+    }
+    return true;
 }
 } // namespace
 
@@ -322,6 +521,37 @@ int main(int argc, char** argv)
         if (!p.isEmpty())
             openB(p);
     });
+    fileMenu->addSeparator();
+
+    auto saveReport = [&](bool html) {
+        if (!ra.ok) {
+            win.statusBar()->showMessage(QStringLiteral("Open a TS file first"), 5000);
+            return;
+        }
+        const QString filter = html ? QStringLiteral("HTML report (*.html);;All files (*)")
+                                    : QStringLiteral("JSON report (*.json);;All files (*)");
+        QString path = QFileDialog::getSaveFileName(&win, html ? "Save HTML report" : "Save JSON report",
+                                                    QString(), filter);
+        if (path.isEmpty())
+            return;
+        if (html && !path.endsWith(".html", Qt::CaseInsensitive))
+            path += ".html";
+        if (!html && !path.endsWith(".json", Qt::CaseInsensitive))
+            path += ".json";
+
+        const QByteArray bytes = html
+            ? reportHtml(ra, pathA, rb, pathB, hasB).toUtf8()
+            : QJsonDocument(reportJson(ra, pathA, rb, pathB, hasB)).toJson(QJsonDocument::Indented);
+        QString error;
+        if (!saveTextFile(path, bytes, error)) {
+            QMessageBox::warning(&win, "Save report failed", error);
+            return;
+        }
+        win.statusBar()->showMessage(QString("Saved report: %1").arg(path), 6000);
+    };
+
+    QObject::connect(fileMenu->addAction("Save &JSON Report..."), &QAction::triggered, &win, [&] { saveReport(false); });
+    QObject::connect(fileMenu->addAction("Save &HTML Report..."), &QAction::triggered, &win, [&] { saveReport(true); });
 
     win.resize(1180, 460);
     win.show();

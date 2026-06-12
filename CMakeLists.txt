@@ -25,6 +25,8 @@ add_executable(ts-inspector
     src/PtsGraphWidget.h    src/PtsGraphWidget.cpp
     src/PicTypeWidget.h     src/PicTypeWidget.cpp
     src/StructureViewer.h   src/StructureViewer.cpp
+    src/CompareViewer.h     src/CompareViewer.cpp
+    src/CompareMap.h        src/CompareMap.cpp
 )
 target_link_libraries(ts-inspector PRIVATE Qt6::Widgets)
 

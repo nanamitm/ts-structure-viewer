@@ -1,3 +1,5 @@
+#include "CompareMap.h"
+#include "CompareViewer.h"
 #include "PicTypeWidget.h"
 #include "PtsGraphWidget.h"
 #include "StructureViewer.h"
@@ -92,6 +94,10 @@ int main(int argc, char** argv)
     timingLayout->addWidget(graphB, 1);
     labB->setVisible(false);
     graphB->setVisible(false);
+
+    // Compare tab: source-vs-export structure alignment, added only in compare
+    // mode (the recovered copy / re-encode / dropped plan over a shared source axis).
+    auto* compare = new CompareViewer(&win);
 
     tabs->addTab(structure, "Structure");
     tabs->addTab(streamsPane, "Streams");
@@ -206,12 +212,32 @@ int main(int argc, char** argv)
         labB->setVisible(hasB);
         graphB->setVisible(hasB);
 
+        // Compare tab: recover the plan (copy / re-encode / dropped) by aligning
+        // B's GOP durations back onto A, and show it only while comparing.
+        const int compareIdx = tabs->indexOf(compare);
+        if (hasB) {
+            qint64 outDur = 0;
+            const auto pieces = buildComparePieces(ra, rb, outDur);
+            CompareViewer::Source src;
+            src.label = QString("A: source - %1").arg(QFileInfo(pathA).fileName());
+            src.durationMs = ra.durationMs;
+            src.rapMs = ra.rapMs;
+            compare->setSource(src);
+            compare->setOutput(pieces, outDur);
+            if (compareIdx < 0)
+                tabs->addTab(compare, "Compare");
+        } else if (compareIdx >= 0) {
+            tabs->removeTab(compareIdx);
+        }
+
         // Test hook: TSV_VIEW="startMs,endMs" opens the structure/picture views zoomed.
         if (const QByteArray v = qgetenv("TSV_VIEW"); !v.isEmpty()) {
             const auto parts = QString::fromLatin1(v).split(',');
             if (parts.size() == 2) {
                 structure->setView(parts[0].toLongLong(), parts[1].toLongLong());
                 pics->setView(parts[0].toLongLong(), parts[1].toLongLong());
+                if (hasB)
+                    compare->setView(parts[0].toLongLong(), parts[1].toLongLong());
             }
         }
         win.setWindowTitle(hasB

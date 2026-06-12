@@ -258,6 +258,31 @@ QJsonArray copyByteSampleJson(const QString& pathA, const QString& pathB,
     return result;
 }
 
+QJsonObject audioCaptionTimingJson(const TsScanResult& ra, const TsScanResult& rb)
+{
+    QJsonObject o;
+    auto audio = [](const TsScanResult& r) {
+        QJsonObject a;
+        a["points"] = r.audioPts.size();
+        if (!r.audioPts.isEmpty()) {
+            a["firstPtsMs"] = QString::number(r.audioPts.first().ptsMs);
+            a["lastPtsMs"] = QString::number(r.audioPts.last().ptsMs);
+            a["spanMs"] = QString::number(r.audioPts.last().ptsMs - r.audioPts.first().ptsMs);
+        }
+        return a;
+    };
+    o["sourceAudio"] = audio(ra);
+    o["exportAudio"] = audio(rb);
+    o["sourceCaptionCount"] = captionCount(ra);
+    o["exportCaptionCount"] = captionCount(rb);
+    if (!ra.audioPts.isEmpty() && !rb.audioPts.isEmpty()) {
+        const qint64 spanA = ra.audioPts.last().ptsMs - ra.audioPts.first().ptsMs;
+        const qint64 spanB = rb.audioPts.last().ptsMs - rb.audioPts.first().ptsMs;
+        o["audioSpanDeltaMs"] = QString::number(spanB - spanA);
+    }
+    return o;
+}
+
 Verdict buildVerdict(const TsScanResult& ra, const TsScanResult& rb, bool hasB,
                      const QVector<ExpectedRange>& expected,
                      const QVector<CompareViewer::OutPiece>& pieces);
@@ -471,6 +496,7 @@ QJsonObject reportJson(const TsScanResult& ra, const QString& pathA,
         cmp["pieces"] = pieceArray;
         cmp["reencodeDetails"] = reencodeDetailsJson(ra, pieces);
         cmp["copyByteSamples"] = copyByteSampleJson(pathA, pathB, ra, rb, pieces);
+        cmp["audioCaptionTiming"] = audioCaptionTimingJson(ra, rb);
         cmp["expectedAlignment"] = expectedAlignmentJson(expectedAlignment(expected, pieces, rb.durationMs));
         cmp["verdict"] = verdictJson(buildVerdict(ra, rb, true, expected, pieces));
         root["compare"] = cmp;
@@ -572,6 +598,13 @@ QString reportHtml(const TsScanResult& ra, const QString& pathA,
             }
             h += "</tbody></table>";
         }
+        const auto ac = audioCaptionTimingJson(ra, rb);
+        h += QString("<h2>Audio / Caption Timing</h2><p>audio PTS points A=%1 B=%2; captions A=%3 B=%4; audio span delta %5 ms</p>")
+                 .arg(ac["sourceAudio"].toObject()["points"].toInt())
+                 .arg(ac["exportAudio"].toObject()["points"].toInt())
+                 .arg(ac["sourceCaptionCount"].toInt())
+                 .arg(ac["exportCaptionCount"].toInt())
+                 .arg(ac["audioSpanDeltaMs"].toString("-"));
     }
     return h;
 }
@@ -712,6 +745,16 @@ Verdict buildVerdict(const TsScanResult& ra, const TsScanResult& rb, bool hasB,
         addVerdictWarn(v, QString("extra audio streams: A=%1 B=%2").arg(audA).arg(audB));
     else
         v.pass.push_back(QString("audio stream count preserved: %1").arg(audA));
+
+    if (!ra.audioPts.isEmpty() && !rb.audioPts.isEmpty()) {
+        const qint64 spanA = ra.audioPts.last().ptsMs - ra.audioPts.first().ptsMs;
+        const qint64 spanB = rb.audioPts.last().ptsMs - rb.audioPts.first().ptsMs;
+        const qint64 delta = spanB - spanA;
+        if (std::llabs(delta) > 1000)
+            addVerdictWarn(v, QString("audio PTS span differs by %1 ms").arg(delta));
+        else
+            v.pass.push_back(QString("audio PTS span close to source delta: %1 ms").arg(delta));
+    }
 
     const auto problems = collectProblems(ra, QStringLiteral("A"), rb, QStringLiteral("B"), true);
     int bBackward = 0;

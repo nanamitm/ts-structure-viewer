@@ -35,6 +35,7 @@ add_executable(ts-inspector
     src/inspector_main.cpp
     src/TsScan.h            src/TsScan.cpp
     src/PtsGraphWidget.h    src/PtsGraphWidget.cpp
+    src/PicTypeWidget.h     src/PicTypeWidget.cpp
     src/StructureViewer.h   src/StructureViewer.cpp
 )
 target_link_libraries(ts-inspector PRIVATE Qt6::Widgets)

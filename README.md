@@ -85,6 +85,9 @@ Scans an actual `.ts` and shows it in three tabs. Unlike the two viewers above
   superimpose detection and a per-PID continuity-counter error count.
 - **Timing** — PTS/DTS/PCR plotted against byte position; backward jumps, gaps
   and `discontinuity_indicator` show up directly (the GUI of `ts_pts_scan.py`).
+- **Pictures** — per-frame picture type (I/P/B) as a skyline, with open/closed
+  GOP markers at the RAPs (`PicTypeWidget`). Zoom into a GOP to read its cadence.
+  MPEG-2 and H.264 are typed from the ES; HEVC is best-effort (IRAP + a guess).
 
 `TsScan` extracts: PAT→PMT streams + PCR_PID, video RAP times (adaptation
 `random_access_indicator`), per-PES PTS/DTS for video/audio, PCR samples, and
@@ -97,7 +100,5 @@ $env:PATH="C:\Qt\6.11.1\msvc2022_64\bin;"+$env:PATH
 ```
 
 ### Still to do
-- **picture-type (I/P/B)** / open-vs-closed GOP view — needs video ES parsing
-  (MPEG-2 picture_coding_type, H.264/HEVC slice types).
 - **two-file diff** — feed `ts-inspector` / `CompareViewer` two real scans
   (source vs export) to diff streams/PSI and overlay the timing across seams.

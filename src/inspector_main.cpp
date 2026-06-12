@@ -1,3 +1,4 @@
+#include "PicTypeWidget.h"
 #include "PtsGraphWidget.h"
 #include "StructureViewer.h"
 #include "TsScan.h"
@@ -40,10 +41,12 @@ int main(int argc, char** argv)
     streamsLayout->addWidget(table, 1);
 
     auto* graph = new PtsGraphWidget(&win);
+    auto* pics = new PicTypeWidget(&win);
 
     tabs->addTab(structure, "Structure");
     tabs->addTab(streamsPane, "Streams");
     tabs->addTab(graph, "Timing");
+    tabs->addTab(pics, "Pictures");
     win.setCentralWidget(tabs);
 
     auto loadFile = [&](const QString& path) {
@@ -67,6 +70,7 @@ int main(int argc, char** argv)
         structure->setRapTimes(r.rapMs);
         structure->setPlan({}); // single file: no cut plan, just GOP structure
         graph->setData(r);
+        pics->setFrames(r.frames, r.durationMs, r.videoCodec);
 
         table->setRowCount(r.streams.size());
         for (int i = 0; i < r.streams.size(); ++i) {
@@ -94,6 +98,14 @@ int main(int argc, char** argv)
                              .arg(QString::number(r.durationMs) + " ms")
                              .arg(r.rapMs.size())
                              .arg(ccTotal));
+        // Test hook: TSV_VIEW="startMs,endMs" opens the structure/picture views zoomed.
+        if (const QByteArray v = qgetenv("TSV_VIEW"); !v.isEmpty()) {
+            const auto parts = QString::fromLatin1(v).split(',');
+            if (parts.size() == 2) {
+                structure->setView(parts[0].toLongLong(), parts[1].toLongLong());
+                pics->setView(parts[0].toLongLong(), parts[1].toLongLong());
+            }
+        }
         win.setWindowTitle(QString("TS Inspector - %1").arg(QFileInfo(path).fileName()));
         win.statusBar()->showMessage(
             QString("Loaded %1 streams, %2 RAP, %3 PCR samples")

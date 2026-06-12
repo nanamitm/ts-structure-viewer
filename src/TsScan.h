@@ -38,6 +38,14 @@ struct PcrPoint {
     bool discontinuity = false;
 };
 
+// One coded video picture (access unit), typed from the elementary stream.
+struct FramePic {
+    qint64 ptsMs = 0;
+    char type = '?';   // 'I' / 'P' / 'B' / '?' (couldn't determine)
+    bool key = false;  // adaptation random_access_indicator (a RAP)
+    bool closed = false; // IDR (H.264/HEVC) or MPEG-2 closed_gop -> closed GOP
+};
+
 struct TsScanResult {
     bool ok = false;
     QString error;
@@ -55,6 +63,8 @@ struct TsScanResult {
     qint64 durationMs = 0;
 
     QVector<qint64> rapMs;       // video RAP times (relative ms, sorted)
+    QVector<FramePic> frames;    // per-AU picture type (relative ms, sorted by PTS)
+    QString videoCodec;          // "MPEG-2" / "H.264" / "HEVC" / ...
     QVector<PesPoint> videoPts;  // video PES timing (relative)
     QVector<PesPoint> audioPts;  // first-audio PES timing (relative)
     QVector<PcrPoint> pcr;       // PCR samples (relative)

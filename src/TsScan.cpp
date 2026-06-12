@@ -32,6 +32,103 @@ QString codecForStreamType(int st)
 bool isVideoType(int st) { return st == 0x01 || st == 0x02 || st == 0x1B || st == 0x24; }
 bool isAudioType(int st) { return st == 0x03 || st == 0x04 || st == 0x0F || st == 0x11; }
 
+enum VCodec { VC_OTHER, VC_MPEG2, VC_H264, VC_HEVC };
+VCodec vcodecOf(int st)
+{
+    if (st == 0x01 || st == 0x02) return VC_MPEG2;
+    if (st == 0x1B) return VC_H264;
+    if (st == 0x24) return VC_HEVC;
+    return VC_OTHER;
+}
+
+// Minimal MSB-first bit reader for Exp-Golomb slice-header fields. Emulation-
+// prevention bytes are not stripped: slice_type sits in the first ~2 bytes of
+// the slice header, well before a 00 00 03 sequence could plausibly appear.
+struct BitReader {
+    const uint8_t* d;
+    int nbits;
+    int pos = 0;
+    BitReader(const uint8_t* d_, int nbytes) : d(d_), nbits(nbytes * 8) {}
+    int u1()
+    {
+        if (pos >= nbits) return 0;
+        const int b = (d[pos >> 3] >> (7 - (pos & 7))) & 1;
+        ++pos;
+        return b;
+    }
+    uint32_t ue()
+    {
+        int z = 0;
+        while (pos < nbits && u1() == 0) ++z;
+        uint32_t v = 0;
+        for (int i = 0; i < z; ++i) v = (v << 1) | u1();
+        return (1u << z) - 1 + v;
+    }
+};
+
+// Classify the first coded picture in an elementary-stream fragment (one TS
+// packet's worth). Returns 'I'/'P'/'B' or '?', and sets `closed` for an IDR /
+// MPEG-2 closed_gop. Best-effort for HEVC (IRAP typing + a slice_type guess).
+char picTypeInEs(const uint8_t* es, int len, VCodec vc, bool& closed)
+{
+    closed = false;
+    bool gopClosed = false;
+    bool sawGop = false, sawSeq = false; // MPEG-2: both only precede an I picture
+    for (int i = 0; i + 4 < len; ++i) {
+        if (!(es[i] == 0 && es[i + 1] == 0 && es[i + 2] == 1))
+            continue;
+        const int sc = i + 3; // first byte after the 00 00 01 start code
+        if (vc == VC_MPEG2) {
+            if (es[sc] == 0xB3) {                        // sequence header
+                sawSeq = true;
+            } else if (es[sc] == 0xB8 && sc + 4 < len) { // group_of_pictures header
+                gopClosed = (es[sc + 4] >> 6) & 1;
+                sawGop = true;
+            } else if (es[sc] == 0x00 && sc + 2 < len) { // picture header (definitive)
+                const int pct = (es[sc + 2] >> 3) & 0x07;
+                closed = gopClosed || sawGop;
+                if (pct == 1) return 'I';
+                if (pct == 2) return 'P';
+                if (pct == 3) return 'B';
+                return '?';
+            }
+        } else if (vc == VC_H264) {
+            const int nal = es[sc] & 0x1F;
+            if (nal == 5) { closed = true; return 'I'; } // IDR slice
+            if (nal == 1) {                              // non-IDR slice
+                BitReader br(es + sc + 1, len - sc - 1);
+                br.ue();                                  // first_mb_in_slice
+                const uint32_t st = br.ue() % 5;          // slice_type
+                if (st == 0) return 'P';
+                if (st == 1) return 'B';
+                if (st == 2) return 'I';
+                return '?';
+            }
+        } else if (vc == VC_HEVC) {
+            const int nal = (es[sc] >> 1) & 0x3F;
+            if (nal == 19 || nal == 20) { closed = true; return 'I'; } // IDR
+            if (nal >= 16 && nal <= 22) return 'I';                    // BLA/CRA (open)
+            if (nal <= 9) {                                            // trailing/leading VCL
+                BitReader br(es + sc + 2, len - sc - 2); // skip 2-byte NAL header
+                br.u1();                                  // first_slice_segment_in_pic_flag
+                br.ue();                                  // slice_pic_parameter_set_id (assume no extra bits)
+                const uint32_t st = br.ue();              // slice_type
+                if (st == 0) return 'B';
+                if (st == 1) return 'P';
+                if (st == 2) return 'I';
+                return '?';
+            }
+        }
+    }
+    // MPEG-2 I picture whose picture header sits past this packet: a sequence or
+    // GOP header (which only precede an I) is enough to type it.
+    if (vc == VC_MPEG2 && (sawGop || sawSeq)) {
+        closed = sawGop && gopClosed;
+        return 'I';
+    }
+    return '?';
+}
+
 // Reassembles one PSI section per PID across packets, enough for PAT/PMT.
 struct SectionAsm {
     QByteArray buf;
@@ -78,6 +175,7 @@ TsScanResult TsScan::scanFile(const QString& path, const std::function<bool(qint
     SectionAsm patAsm, pmtAsm;
     QMap<int, int> lastCc; // pid -> last continuity_counter
     bool haveFirstPts = false;
+    VCodec vcodec = VC_OTHER;
 
     auto parsePat = [&](const uint8_t* s, int n) {
         if (r.pmtPid >= 0 || s[0] != 0x00)
@@ -124,8 +222,11 @@ TsScanResult TsScan::scanFile(const QString& path, const std::function<bool(qint
             si.codec = codecForStreamType(si.streamType);
             if (isVideoType(si.streamType)) {
                 si.kind = QStringLiteral("video");
-                if (r.videoPid < 0)
+                if (r.videoPid < 0) {
                     r.videoPid = si.pid;
+                    vcodec = vcodecOf(si.streamType);
+                    r.videoCodec = si.codec;
+                }
             } else if (isAudioType(si.streamType)) {
                 si.kind = QStringLiteral("audio");
                 if (r.audioPid < 0)
@@ -235,6 +336,15 @@ TsScanResult TsScan::scanFile(const QString& path, const std::function<bool(qint
                             r.videoPts.push_back(pp);
                             if (rai)
                                 r.rapMs.push_back(ptsMs); // RAP: rebased below
+                            // Picture type from the ES that follows the PES header.
+                            const int esOff = 9 + p[8];
+                            const int esLen = (kPkt - payoff) - esOff;
+                            FramePic fp;
+                            fp.ptsMs = ptsMs;
+                            fp.key = rai;
+                            if (esLen > 4)
+                                fp.type = picTypeInEs(p + esOff, esLen, vcodec, fp.closed);
+                            r.frames.push_back(fp);
                         } else if (pid == r.audioPid) {
                             r.audioPts.push_back(pp);
                         }
@@ -266,6 +376,9 @@ TsScanResult TsScan::scanFile(const QString& path, const std::function<bool(qint
     for (auto& p : r.pcr) p.pcrMs = rebase(p.pcrMs);
     for (auto& t : r.rapMs) t = rebase(t);
     std::sort(r.rapMs.begin(), r.rapMs.end());
+    for (auto& fp : r.frames) fp.ptsMs = rebase(fp.ptsMs);
+    std::sort(r.frames.begin(), r.frames.end(),
+              [](const FramePic& a, const FramePic& b) { return a.ptsMs < b.ptsMs; });
 
     qint64 maxPts = 0;
     for (const auto& p : r.videoPts)

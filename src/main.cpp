@@ -731,7 +731,12 @@ int main(int argc, char** argv)
         QObject::connect(&worker, &TsScanWorker::progress, &dlg, [&dlg](qint64 d, qint64 t) {
             dlg.setValue(t > 0 ? int(d * 1000 / t) : 0);
         });
-        QObject::connect(&dlg, &QProgressDialog::canceled, &worker, &TsScanWorker::cancel);
+        // The worker thread is busy inside TsScan::scanFile(), so a queued slot
+        // on the worker would not run until the scan already ended. Flip the
+        // worker's atomic cancel flag directly from the GUI thread instead.
+        QObject::connect(&dlg, &QProgressDialog::canceled, &dlg, [&worker] {
+            worker.cancel();
+        });
 
         QEventLoop loop;
         QObject::connect(&worker, &TsScanWorker::finished, &loop, [&](const TsScanResult& r) {

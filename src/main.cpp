@@ -24,6 +24,7 @@
 #include <QStatusBar>
 #include <QTabWidget>
 #include <QTableWidget>
+#include <QTextStream>
 #include <QThread>
 #include <QVBoxLayout>
 #include <algorithm>
@@ -407,6 +408,55 @@ int main(int argc, char** argv)
     QApplication app(argc, argv);
     QApplication::setApplicationName(QStringLiteral("ts-structure-viewer"));
     qRegisterMetaType<TsScanResult>(); // so it can cross the worker thread boundary
+
+    const QStringList args = app.arguments();
+    if (args.size() >= 2 && args[1] == "--check") {
+        QTextStream err(stderr);
+        QTextStream out(stdout);
+        if (args.size() < 4) {
+            err << "usage: ts-structure-viewer --check source.ts export.ts [--json report.json] [--html report.html]\n";
+            return 2;
+        }
+        QString jsonPath;
+        QString htmlPath;
+        for (int i = 4; i < args.size(); ++i) {
+            if (args[i] == "--json" && i + 1 < args.size()) {
+                jsonPath = args[++i];
+            } else if (args[i] == "--html" && i + 1 < args.size()) {
+                htmlPath = args[++i];
+            } else {
+                err << "unknown or incomplete option: " << args[i] << "\n";
+                return 2;
+            }
+        }
+
+        const QString pathA = args[2];
+        const QString pathB = args[3];
+        TsScanResult ra = TsScan::scanFile(pathA);
+        if (!ra.ok) {
+            err << "source scan failed: " << ra.error << "\n";
+            return 1;
+        }
+        TsScanResult rb = TsScan::scanFile(pathB);
+        if (!rb.ok) {
+            err << "export scan failed: " << rb.error << "\n";
+            return 1;
+        }
+
+        QString error;
+        const QJsonDocument json(reportJson(ra, pathA, rb, pathB, true));
+        if (!jsonPath.isEmpty() && !saveTextFile(jsonPath, json.toJson(QJsonDocument::Indented), error)) {
+            err << "json save failed: " << error << "\n";
+            return 1;
+        }
+        if (!htmlPath.isEmpty() && !saveTextFile(htmlPath, reportHtml(ra, pathA, rb, pathB, true).toUtf8(), error)) {
+            err << "html save failed: " << error << "\n";
+            return 1;
+        }
+        if (jsonPath.isEmpty() && htmlPath.isEmpty())
+            out << json.toJson(QJsonDocument::Indented);
+        return 0;
+    }
 
     QMainWindow win;
     win.setWindowTitle(QStringLiteral("TS Structure Viewer"));

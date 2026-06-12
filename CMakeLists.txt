@@ -14,11 +14,7 @@ set(CMAKE_AUTOMOC ON)
 #   .\build-msvc\Release\ts-structure-viewer.exe "path\to\file.ts"
 find_package(Qt6 REQUIRED COMPONENTS Widgets)
 
-# Real-file TS structure viewer: scans an actual .ts (TsScan, on a background
-# thread) and shows its structure (GOP/RAP) / streams (PSI) / timing (PTS/DTS/
-# PCR) / picture types (I/P/B). Open a second file to switch into source-vs-
-# export compare mode (PSI diff + stacked timing + structure alignment).
-add_executable(ts-structure-viewer
+set(TSV_SOURCES
     src/main.cpp
     src/TsScan.h            src/TsScan.cpp
     src/TsScanWorker.h      src/TsScanWorker.cpp
@@ -28,18 +24,31 @@ add_executable(ts-structure-viewer
     src/CompareViewer.h     src/CompareViewer.cpp
     src/CompareMap.h        src/CompareMap.cpp
 )
+
+# Real-file TS structure viewer: scans an actual .ts (TsScan, on a background
+# thread) and shows its structure (GOP/RAP) / streams (PSI) / timing (PTS/DTS/
+# PCR) / picture types (I/P/B). Open a second file to switch into source-vs-
+# export compare mode (PSI diff + stacked timing + structure alignment).
+add_executable(ts-structure-viewer ${TSV_SOURCES})
 target_link_libraries(ts-structure-viewer PRIVATE Qt6::Widgets)
 
-if (WIN32)
-    set_target_properties(ts-structure-viewer PROPERTIES WIN32_EXECUTABLE ON)
+add_executable(ts-structure-viewer-cli ${TSV_SOURCES})
+target_link_libraries(ts-structure-viewer-cli PRIVATE Qt6::Widgets)
 
+if (WIN32)
     # Deploy the Qt runtime DLLs + plugins next to the .exe (windeployqt) so it
     # runs standalone without Qt on PATH.
     find_program(WINDEPLOYQT_EXECUTABLE windeployqt HINTS "${Qt6_DIR}/../../../bin")
-    if (WINDEPLOYQT_EXECUTABLE)
-        add_custom_command(TARGET ts-structure-viewer POST_BUILD
+    function(deploy_qt_runtime target)
+        if (WINDEPLOYQT_EXECUTABLE)
+            add_custom_command(TARGET ${target} POST_BUILD
             COMMAND "${WINDEPLOYQT_EXECUTABLE}" --release --no-translations
-                    --no-system-d3d-compiler --no-opengl-sw "$<TARGET_FILE:ts-structure-viewer>"
-            COMMENT "Deploying Qt runtime for ts-structure-viewer" VERBATIM)
-    endif()
+                    --no-system-d3d-compiler --no-opengl-sw "$<TARGET_FILE:${target}>"
+            COMMENT "Deploying Qt runtime for ${target}" VERBATIM)
+        endif()
+    endfunction()
+
+    set_target_properties(ts-structure-viewer PROPERTIES WIN32_EXECUTABLE ON)
+    deploy_qt_runtime(ts-structure-viewer)
+    deploy_qt_runtime(ts-structure-viewer-cli)
 endif()

@@ -73,6 +73,14 @@ standalone — no Qt on PATH needed.
 .\build-msvc\Release\ts-structure-viewer.exe "source.ts" "export.ts"  # compare mode
 ```
 
+CLI report mode is available through the console-subsystem executable for
+automated checks:
+
+```powershell
+.\build-msvc\Release\ts-structure-viewer-cli.exe --check "source.ts" "export.ts" --json report.json
+.\build-msvc\Release\ts-structure-viewer-cli.exe --check "source.ts" "export.ts" --html report.html
+```
+
 ## History
 This repo started as a sandbox of synthetic-data viewers for prototyping the
 structure/compare widgets (and a brief, since-reverted integration into

@@ -46,4 +46,19 @@ if (WIN32)
     set_target_properties(ts-structure-viewer PROPERTIES WIN32_EXECUTABLE ON)
     set_target_properties(ts-compare-viewer PROPERTIES WIN32_EXECUTABLE ON)
     set_target_properties(ts-inspector PROPERTIES WIN32_EXECUTABLE ON)
+
+    # Deploy the Qt runtime DLLs + plugins next to each .exe (windeployqt) so the
+    # executables run standalone without Qt on PATH.
+    find_program(WINDEPLOYQT_EXECUTABLE windeployqt HINTS "${Qt6_DIR}/../../../bin")
+    function(deploy_qt tgt)
+        if (WINDEPLOYQT_EXECUTABLE)
+            add_custom_command(TARGET ${tgt} POST_BUILD
+                COMMAND "${WINDEPLOYQT_EXECUTABLE}" --release --no-translations
+                        --no-system-d3d-compiler --no-opengl-sw "$<TARGET_FILE:${tgt}>"
+                COMMENT "Deploying Qt runtime for ${tgt}" VERBATIM)
+        endif()
+    endfunction()
+    deploy_qt(ts-structure-viewer)
+    deploy_qt(ts-compare-viewer)
+    deploy_qt(ts-inspector)
 endif()

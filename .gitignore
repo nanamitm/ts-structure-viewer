@@ -1,0 +1,22 @@
+# Build output
+build*/
+out/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+
+# MSVC / IDE
+*.vcxproj.user
+*.user
+.vs/
+*.obj
+*.exe
+*.pdb
+*.ilk
+
+# Scratch screenshots / sample data
+*.png
+*.ts
+*.tsedit

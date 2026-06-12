@@ -29,7 +29,18 @@ add_executable(ts-compare-viewer
 )
 target_link_libraries(ts-compare-viewer PRIVATE Qt6::Widgets)
 
+# Real-file inspector: scans an actual .ts (TsScan) and shows structure / PSI /
+# timing. Reuses the StructureViewer widget for the structure tab.
+add_executable(ts-inspector
+    src/inspector_main.cpp
+    src/TsScan.h            src/TsScan.cpp
+    src/PtsGraphWidget.h    src/PtsGraphWidget.cpp
+    src/StructureViewer.h   src/StructureViewer.cpp
+)
+target_link_libraries(ts-inspector PRIVATE Qt6::Widgets)
+
 if (WIN32)
     set_target_properties(ts-structure-viewer PROPERTIES WIN32_EXECUTABLE ON)
     set_target_properties(ts-compare-viewer PROPERTIES WIN32_EXECUTABLE ON)
+    set_target_properties(ts-inspector PROPERTIES WIN32_EXECUTABLE ON)
 endif()

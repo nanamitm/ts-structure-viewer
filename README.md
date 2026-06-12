@@ -74,7 +74,30 @@ $env:PATH="C:\Qt\6.11.1\msvc2022_64\bin;"+$env:PATH
 $env:TSV_VIEW="58000,95000"; .\build-msvc\Release\ts-compare-viewer.exe  # zoom to a seam
 ```
 
-### Later drill-downs
-- per-piece continuity check across seams (PTS/DTS/PCR, CC) — GUI of `tools/ts_pts_scan.py`
-- stream/PSI diff (PIDs, ARIB caption, audio tracks preserved through the cut)
-- picture-type (I/P/B) / open-vs-closed GOP view
+## Real-file inspector (`ts-inspector`)
+Scans an actual `.ts` and shows it in three tabs. Unlike the two viewers above
+(synthetic data), this reads real files via `TsScan` — a dependency-free
+(Qt-only) raw 188-byte TS parser:
+
+- **Structure** — the real GOP/RAP timeline (reuses `StructureViewer`).
+- **Streams** — the PSI: program / PMT / PCR_PID / video PID and the elementary
+  stream table (PID, kind, codec, language, PCR), including ARIB caption /
+  superimpose detection and a per-PID continuity-counter error count.
+- **Timing** — PTS/DTS/PCR plotted against byte position; backward jumps, gaps
+  and `discontinuity_indicator` show up directly (the GUI of `ts_pts_scan.py`).
+
+`TsScan` extracts: PAT→PMT streams + PCR_PID, video RAP times (adaptation
+`random_access_indicator`), per-PES PTS/DTS for video/audio, PCR samples, and
+CC errors — all in one pass. Validated against ts-edit-gui's libav scan (same
+RAP count, 3712, on the same source).
+
+```powershell
+$env:PATH="C:\Qt\6.11.1\msvc2022_64\bin;"+$env:PATH
+.\build-msvc\Release\ts-inspector.exe "path\to\file.ts"   # or File > Open
+```
+
+### Still to do
+- **picture-type (I/P/B)** / open-vs-closed GOP view — needs video ES parsing
+  (MPEG-2 picture_coding_type, H.264/HEVC slice types).
+- **two-file diff** — feed `ts-inspector` / `CompareViewer` two real scans
+  (source vs export) to diff streams/PSI and overlay the timing across seams.

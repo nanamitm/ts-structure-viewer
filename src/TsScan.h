@@ -44,6 +44,7 @@ struct CcErrorPoint {
     qint64 byte = 0;
     int expected = -1;
     int actual = -1;
+    qint64 approxMs = -1; // nearest PCR/PTS time, relative ms, for UI navigation
 };
 
 // One coded video picture (access unit), typed from the elementary stream.

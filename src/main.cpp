@@ -103,6 +103,7 @@ QJsonObject scanJson(const TsScanResult& r, const QString& path)
         o["byte"] = QString::number(e.byte);
         o["expected"] = e.expected;
         o["actual"] = e.actual;
+        o["approxMs"] = e.approxMs >= 0 ? QJsonValue(QString::number(e.approxMs)) : QJsonValue();
         ccErrorDetails.push_back(o);
     }
 
@@ -304,9 +305,11 @@ QVector<Problem> collectProblemsOne(const TsScanResult& r, const QString& label)
                                         "adaptation_field.discontinuity_indicator is set" });
     }
     for (const auto& e : r.ccErrorPoints) {
-        problems.push_back(Problem{ label, "error", "CC error", -1, e.byte,
-                                    QString("PID 0x%1 expected %2, got %3")
-                                        .arg(e.pid, 4, 16, QChar('0')).arg(e.expected).arg(e.actual) });
+        QString detail = QString("PID 0x%1 expected %2, got %3")
+                             .arg(e.pid, 4, 16, QChar('0')).arg(e.expected).arg(e.actual);
+        if (e.approxMs >= 0)
+            detail += QString(" (time estimated from nearest PCR/PTS)");
+        problems.push_back(Problem{ label, "error", "CC error", e.approxMs, e.byte, detail });
     }
 
     addTimingProblems(problems, r.videoPts, label, "video PTS",

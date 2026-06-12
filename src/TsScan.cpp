@@ -2,6 +2,8 @@
 
 #include <QFile>
 #include <algorithm>
+#include <cstdlib>
+#include <limits>
 
 namespace {
 constexpr int kPkt = 188;
@@ -160,6 +162,29 @@ struct SectionAsm {
         }
     }
 };
+
+template <typename Point, typename GetByte, typename GetTime>
+qint64 nearestTimeByByte(const QVector<Point>& points, qint64 byte, GetByte getByte, GetTime getTime)
+{
+    if (points.isEmpty())
+        return -1;
+    auto it = std::lower_bound(points.begin(), points.end(), byte,
+                               [&](const Point& p, qint64 b) { return getByte(p) < b; });
+    qint64 bestTime = -1;
+    qint64 bestDistance = std::numeric_limits<qint64>::max();
+    auto consider = [&](const Point& p) {
+        const qint64 dist = std::llabs(getByte(p) - byte);
+        if (dist < bestDistance) {
+            bestDistance = dist;
+            bestTime = getTime(p);
+        }
+    };
+    if (it != points.end())
+        consider(*it);
+    if (it != points.begin())
+        consider(*(it - 1));
+    return bestTime;
+}
 } // namespace
 
 TsScanResult TsScan::scanFile(const QString& path, const std::function<bool(qint64, qint64)>& progress)
@@ -381,6 +406,20 @@ TsScanResult TsScan::scanFile(const QString& path, const std::function<bool(qint
     for (auto& fp : r.frames) fp.ptsMs = rebase(fp.ptsMs);
     std::sort(r.frames.begin(), r.frames.end(),
               [](const FramePic& a, const FramePic& b) { return a.ptsMs < b.ptsMs; });
+
+    for (auto& e : r.ccErrorPoints) {
+        e.approxMs = nearestTimeByByte(r.pcr, e.byte,
+                                       [](const PcrPoint& p) { return p.byte; },
+                                       [](const PcrPoint& p) { return p.pcrMs; });
+        if (e.approxMs < 0)
+            e.approxMs = nearestTimeByByte(r.videoPts, e.byte,
+                                           [](const PesPoint& p) { return p.byte; },
+                                           [](const PesPoint& p) { return p.ptsMs; });
+        if (e.approxMs < 0)
+            e.approxMs = nearestTimeByByte(r.audioPts, e.byte,
+                                           [](const PesPoint& p) { return p.byte; },
+                                           [](const PesPoint& p) { return p.ptsMs; });
+    }
 
     qint64 maxPts = 0;
     for (const auto& p : r.videoPts)

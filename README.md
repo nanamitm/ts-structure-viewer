@@ -24,6 +24,16 @@ Open a real `.ts` (`File > Open`, or pass it as the first argument):
 - **Pictures** — per-frame picture type (I/P/B) as a skyline, with open/closed
   GOP markers at the RAPs (`PicTypeWidget`). Zoom into a GOP to read its cadence.
   MPEG-2 and H.264 are typed from the ES; HEVC is best-effort (IRAP + a guess).
+- **Problems** — PCR discontinuities, CC errors (timestamp estimated from the
+  nearest PCR/PTS sample), and PTS/PCR backward-jumps/gaps in one table (File,
+  Severity, Type, Time, Byte, Detail). Double-click a timed row to zoom
+  Structure/Pictures (or Compare, for an export-side row) to that moment.
+- **Range Details** — shift-drag a span on the Structure timeline to get its
+  RAP count, frame-type (I/P/B) breakdown, video/audio PTS and PCR sample
+  counts, and how many timed Problems fall inside it.
+
+Right-click → **Copy Row** / **Copy Row with Header** is available on the
+Streams and Problems tables.
 
 `TsScan` extracts, in one pass: PAT→PMT streams + PCR_PID, video RAP times
 (adaptation `random_access_indicator`), per-PES PTS/DTS for video/audio, PCR
@@ -51,6 +61,20 @@ second argument) to verify a smart-render round trip:
   back onto the source (verbatim copies keep their RAP intervals). Boundary
   (lead-in/tail) classification is heuristic; the copy/dropped alignment is solid.
 - **Structure** and **Pictures** keep showing A.
+- a **Verification** tab gives an overall PASS/WARN/FAIL verdict — checks
+  caption/audio preservation, PTS/PCR backward-jumps/gaps/CC errors introduced
+  in B, PCR discontinuities, and (if expected cuts are loaded) cut-alignment
+  drift over ~80ms.
+- the Streams diff also catches **PID remaps**: a stream that looks
+  dropped/added but matches another PID's kind/codec/language on the other
+  side is reported as `PID changed -> 0x..` (or `from 0x..`) instead.
+- the Compare tab's status line and the Streams summary report the time split
+  as copy/re-encode percentages (e.g. `copy 87.3% / re-encode 12.7%`).
+- **Navigate ▸ Next/Previous Seam** jumps between the export's splice points,
+  zooming a ±5s window and switching to the Compare tab.
+- **File ▸ Open Expected Cuts...** loads the same range format as the CLI's
+  `--cuts` (JSON or CSV/TXT) and adds a start/end/duration alignment delta to
+  the Streams summary and the Verification verdict.
 
 Verified on a real round trip (a H.264 source + a 2-cut smart-render export from
 ts-edit-gui): video, audio and the **ARIB caption (0x1305)** all diff as `same`,
@@ -84,7 +108,12 @@ automated checks:
 
 `--cuts` accepts JSON (`{"ranges":[{"startMs":1000,"endMs":5000}]}` or an array)
 or CSV/TXT (`startMs,endMs`). The CLI exits with code 1 when the verification
-verdict is `FAIL`.
+verdict is `FAIL`. The same report generator backs **File ▸ Save JSON/HTML
+Report...** in the GUI. Besides the PASS/WARN/FAIL verdict, the report
+includes per-piece copy-byte-sample diffs (a 256KB sample compared at the
+mapped offset, with an equal-byte percentage), re-encode boundary frame
+composition (I/P/B counts either side of the seam), audio/caption timing
+spans, and — with `--cuts` — the expected-cut alignment deltas.
 
 ## History
 This repo started as a sandbox of synthetic-data viewers for prototyping the
